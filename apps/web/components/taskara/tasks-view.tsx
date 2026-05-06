@@ -168,6 +168,24 @@ function getSystemViewKey(viewKey: ActiveViewKey): SystemViewKey | null {
 const activeViewQueryParam = 'view';
 const activeViewStoragePrefix = 'taskara:tasks-active-view';
 const taskComposerPreferenceStoragePrefix = 'taskara:task-composer-preferences';
+const issueListScrollStoragePrefix = 'taskara:issue-list-scroll';
+const issueListScrollSnapshotMaxAgeMs = 30 * 60 * 1000;
+const issueReturnHighlightDurationMs = 2500;
+
+type IssueListScrollSnapshot = {
+   hash: string;
+   pathname: string;
+   savedAt: number;
+   scrollLeft: number;
+   scrollTop: number;
+   search: string;
+   taskId?: string;
+};
+
+type StableTaskOrderSnapshot = {
+   key: string;
+   taskIds: string[];
+};
 
 type TaskComposerPreferences = {
    createMore?: boolean;
@@ -181,6 +199,10 @@ function taskViewSelectionStorageKey(workspaceKey: string, teamKey: string) {
 
 function taskComposerPreferenceStorageKey(workspaceKey: string, teamKey: string) {
    return `${taskComposerPreferenceStoragePrefix}:${workspaceKey}:${teamKey}`;
+}
+
+function issueListScrollStorageKey(pathname: string, search: string, hash: string) {
+   return `${issueListScrollStoragePrefix}:${pathname}${search}${hash}`;
 }
 
 function getActiveViewKeyFromSearch(search: string): ActiveViewKey | null {
@@ -225,6 +247,90 @@ function writeStoredTaskComposerPreferences(
       taskComposerPreferenceStorageKey(workspaceKey, teamKey),
       JSON.stringify(preferences)
    );
+}
+
+function readStoredIssueListScrollSnapshot(
+   pathname: string,
+   search: string,
+   hash: string
+): IssueListScrollSnapshot | null {
+   if (typeof window === 'undefined') return null;
+
+   const storageKey = issueListScrollStorageKey(pathname, search, hash);
+   let raw: string | null = null;
+   try {
+      raw = window.sessionStorage.getItem(storageKey);
+   } catch {
+      return null;
+   }
+   if (!raw) return null;
+
+   try {
+      const parsed = JSON.parse(raw) as Partial<IssueListScrollSnapshot>;
+      if (
+         parsed.pathname !== pathname ||
+         parsed.search !== search ||
+         parsed.hash !== hash ||
+         typeof parsed.scrollTop !== 'number' ||
+         typeof parsed.scrollLeft !== 'number' ||
+         typeof parsed.savedAt !== 'number' ||
+         Date.now() - parsed.savedAt > issueListScrollSnapshotMaxAgeMs
+      ) {
+         try {
+            window.sessionStorage.removeItem(storageKey);
+         } catch {
+            // Ignore sessionStorage failures.
+         }
+         return null;
+      }
+
+      return {
+         hash,
+         pathname,
+         savedAt: parsed.savedAt,
+         scrollLeft: Math.max(parsed.scrollLeft, 0),
+         scrollTop: Math.max(parsed.scrollTop, 0),
+         search,
+         taskId: typeof parsed.taskId === 'string' ? parsed.taskId : undefined,
+      };
+   } catch {
+      try {
+         window.sessionStorage.removeItem(storageKey);
+      } catch {
+         // Ignore sessionStorage failures.
+      }
+      return null;
+   }
+}
+
+function writeStoredIssueListScrollSnapshot(snapshot: IssueListScrollSnapshot) {
+   if (typeof window === 'undefined') return;
+
+   try {
+      window.sessionStorage.setItem(
+         issueListScrollStorageKey(snapshot.pathname, snapshot.search, snapshot.hash),
+         JSON.stringify(snapshot)
+      );
+   } catch {
+      // Ignore sessionStorage failures.
+   }
+}
+
+function removeStoredIssueListScrollSnapshot(pathname: string, search: string, hash: string) {
+   if (typeof window === 'undefined') return;
+   try {
+      window.sessionStorage.removeItem(issueListScrollStorageKey(pathname, search, hash));
+   } catch {
+      // Ignore sessionStorage failures.
+   }
+}
+
+function findIssueListTaskElement(container: HTMLElement, taskId: string) {
+   const candidates = container.querySelectorAll<HTMLElement>('[data-taskara-task-id]');
+   for (const candidate of candidates) {
+      if (candidate.dataset.taskaraTaskId === taskId) return candidate;
+   }
+   return null;
 }
 
 function searchWithActiveView(
@@ -462,6 +568,74 @@ function compareTasks(a: TaskaraTask, b: TaskaraTask, orderBy: TaskViewOrdering)
    return compareDateString(a.updatedAt, b.updatedAt, 0);
 }
 
+function makeStableTaskOrderKey(
+   pathname: string,
+   search: string,
+   hash: string,
+   activeViewKey: ActiveViewKey,
+   draftView: TaskaraTaskViewState
+) {
+   return JSON.stringify({
+      activeViewKey,
+      assigneeIds: draftView.assigneeIds,
+      completedIssues: draftView.completedIssues,
+      groupBy: draftView.groupBy,
+      hash,
+      labels: draftView.labels,
+      orderBy: draftView.orderBy,
+      pathname,
+      priority: draftView.priority,
+      projectIds: draftView.projectIds,
+      query: draftView.query,
+      search,
+      status: draftView.status,
+   });
+}
+
+function preserveStableTaskOrder(
+   tasks: TaskaraTask[],
+   orderBy: TaskViewOrdering,
+   key: string,
+   snapshot: StableTaskOrderSnapshot | null
+) {
+   const naturallySortedTasks = [...tasks].sort((a, b) => compareTasks(a, b, orderBy));
+
+   if (!snapshot || snapshot.key !== key) {
+      return {
+         nextSnapshot: {
+            key,
+            taskIds: naturallySortedTasks.map((task) => task.id),
+         },
+         tasks: naturallySortedTasks,
+      };
+   }
+
+   const orderById = new Map(snapshot.taskIds.map((taskId, index) => [taskId, index]));
+   const existingTasks: TaskaraTask[] = [];
+   const newTasks: TaskaraTask[] = [];
+
+   for (const task of tasks) {
+      if (orderById.has(task.id)) {
+         existingTasks.push(task);
+      } else {
+         newTasks.push(task);
+      }
+   }
+
+   existingTasks.sort((a, b) => (orderById.get(a.id) ?? 0) - (orderById.get(b.id) ?? 0));
+   newTasks.sort((a, b) => compareTasks(a, b, orderBy));
+
+   const orderedTasks = [...existingTasks, ...newTasks];
+
+   return {
+      nextSnapshot: {
+         key,
+         taskIds: orderedTasks.map((task) => task.id),
+      },
+      tasks: orderedTasks,
+   };
+}
+
 function taskMatchesQuery(task: TaskaraTask, query: string) {
    if (!query) return true;
    const normalizedQuery = query.trim().toLowerCase();
@@ -555,6 +729,7 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
    const [views, setViews] = useState<TaskaraView[]>([]);
    const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
    const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null);
+   const [returnHighlightedTaskId, setReturnHighlightedTaskId] = useState<string | null>(null);
    const [composerOpen, setComposerOpen] = useState(false);
    const [composerFullscreen, setComposerFullscreen] = useState(false);
    const [createMore, setCreateMore] = useState(false);
@@ -572,16 +747,21 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
    const [menuAnchor, setMenuAnchor] = useState<MenuAnchor | null>(null);
    const [activeFilterSection, setActiveFilterSection] = useState<FilterMenuSection | null>(null);
    const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+   const [viewActionsOpen, setViewActionsOpen] = useState(false);
    const [saveMode, setSaveMode] = useState<'create' | 'update'>('create');
    const [viewName, setViewName] = useState('');
    const [viewShared, setViewShared] = useState(true);
    const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
    const composerFileInputRef = useRef<HTMLInputElement>(null);
+   const scrollContainerRef = useRef<HTMLDivElement>(null);
+   const stableTaskOrderRef = useRef<StableTaskOrderSnapshot | null>(null);
    const restoredViewRequestRef = useRef<string | null>(null);
+   const restoredScrollRequestRef = useRef<string | null>(null);
    const restoredComposerPreferenceKeyRef = useRef<string | null>(null);
    const composerPreferencesHydratedRef = useRef(false);
    const defaultActiveViewKey: ActiveViewKey = `system:${defaultSystemView}`;
    const viewRestoreRequestKey = `${workspaceKey}:${viewScopeKey}:${location.search}`;
+   const scrollRestoreRequestKey = `${location.pathname}${location.search}${location.hash}`;
    const composerPreferenceKey = `${workspaceKey}:${viewScopeKey}`;
 
    const persistActiveViewSelection = useCallback(
@@ -627,6 +807,32 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
       if (typeof window === 'undefined') return 'left';
       return anchor.left < window.innerWidth / 2 ? 'right' : 'left';
    }, []);
+
+   const getCurrentIssueListReturnSearch = useCallback(
+      () => searchWithActiveView(location.search, activeViewKey, defaultActiveViewKey),
+      [activeViewKey, defaultActiveViewKey, location.search]
+   );
+
+   const saveIssueListScrollSnapshot = useCallback((taskId?: string) => {
+      const container = scrollContainerRef.current;
+      if (!container) return;
+      const returnSearch = getCurrentIssueListReturnSearch();
+
+      const snapshot = {
+         hash: location.hash,
+         pathname: location.pathname,
+         savedAt: Date.now(),
+         scrollLeft: container.scrollLeft,
+         scrollTop: container.scrollTop,
+         search: returnSearch,
+         taskId,
+      };
+
+      writeStoredIssueListScrollSnapshot(snapshot);
+      if (returnSearch !== location.search) {
+         writeStoredIssueListScrollSnapshot({ ...snapshot, search: location.search });
+      }
+   }, [getCurrentIssueListReturnSearch, location.hash, location.pathname, location.search]);
 
    const openFilterMenu = useCallback(
       (anchor?: MenuAnchor) => {
@@ -825,6 +1031,12 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
       () => visibleViews.find((view) => view.id === activeViewKey) || null,
       [activeViewKey, visibleViews]
    );
+   const canUpdateActiveSavedView = Boolean(
+      activeSavedView && (!activeSavedView.ownerId || activeSavedView.ownerId === currentUserId)
+   );
+   const canDeleteActiveSavedView = Boolean(
+      activeSavedView?.ownerId && activeSavedView.ownerId === currentUserId
+   );
 
    const hasDraftChanges = useMemo(() => {
       const systemViewKey = getSystemViewKey(activeViewKey);
@@ -838,7 +1050,7 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
       return JSON.stringify(baseline) !== JSON.stringify(draftView);
    }, [activeSavedView, activeViewKey, currentTeamKey, draftView]);
 
-   const filteredTasks = useMemo(() => {
+   const filteredTasksBeforeStableSort = useMemo(() => {
       return scopedTasks
          .filter((task) =>
             draftView.status.length ? draftView.status.includes(task.status) : true
@@ -865,9 +1077,31 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
                : true
          )
          .filter((task) => matchesCompletedIssueSetting(task, draftView.completedIssues))
-         .filter((task) => taskMatchesQuery(task, draftView.query))
-         .sort((a, b) => compareTasks(a, b, draftView.orderBy));
+         .filter((task) => taskMatchesQuery(task, draftView.query));
    }, [draftView, scopedTasks]);
+
+   const stableTaskOrderKey = useMemo(
+      () =>
+         makeStableTaskOrderKey(
+            location.pathname,
+            location.search,
+            location.hash,
+            activeViewKey,
+            draftView
+         ),
+      [activeViewKey, draftView, location.hash, location.pathname, location.search]
+   );
+
+   const filteredTasks = useMemo(() => {
+      const { nextSnapshot, tasks } = preserveStableTaskOrder(
+         filteredTasksBeforeStableSort,
+         draftView.orderBy,
+         stableTaskOrderKey,
+         stableTaskOrderRef.current
+      );
+      stableTaskOrderRef.current = nextSnapshot;
+      return tasks;
+   }, [draftView.orderBy, filteredTasksBeforeStableSort, stableTaskOrderKey]);
 
    const groupedTasks = useMemo<GroupDescriptor[]>(() => {
       const groups: Array<Omit<GroupDescriptor, 'tasks' | 'offset'> & { tasks: TaskaraTask[] }> =
@@ -973,6 +1207,66 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
       [scopedTasks]
    );
 
+   useEffect(() => {
+      restoredScrollRequestRef.current = null;
+   }, [scrollRestoreRequestKey]);
+
+   useEffect(() => {
+      if (loading) return;
+      if (restoredScrollRequestRef.current === scrollRestoreRequestKey) return;
+
+      const container = scrollContainerRef.current;
+      if (!container) return;
+
+      const snapshot = readStoredIssueListScrollSnapshot(
+         location.pathname,
+         location.search,
+         location.hash
+      );
+
+      if (!snapshot) {
+         restoredScrollRequestRef.current = scrollRestoreRequestKey;
+         return;
+      }
+
+      restoredScrollRequestRef.current = scrollRestoreRequestKey;
+      let highlightTimeout: number | undefined;
+
+      const frame = window.requestAnimationFrame(() => {
+         const maxScrollTop = Math.max(container.scrollHeight - container.clientHeight, 0);
+         const maxScrollLeft = Math.max(container.scrollWidth - container.clientWidth, 0);
+         container.scrollTo({
+            left: Math.min(snapshot.scrollLeft, maxScrollLeft),
+            top: Math.min(snapshot.scrollTop, maxScrollTop),
+         });
+         if (snapshot.taskId) {
+            const taskElement = findIssueListTaskElement(container, snapshot.taskId);
+            if (taskElement) {
+               taskElement.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+               setReturnHighlightedTaskId(snapshot.taskId);
+               highlightTimeout = window.setTimeout(
+                  () => setReturnHighlightedTaskId(null),
+                  issueReturnHighlightDurationMs
+               );
+            }
+         }
+         removeStoredIssueListScrollSnapshot(location.pathname, location.search, location.hash);
+      });
+
+      return () => {
+         window.cancelAnimationFrame(frame);
+         if (highlightTimeout !== undefined) window.clearTimeout(highlightTimeout);
+      };
+   }, [
+      groupedTasks.length,
+      loading,
+      location.hash,
+      location.pathname,
+      location.search,
+      scrollRestoreRequestKey,
+      visibleTasks.length,
+   ]);
+
    const openComposer = useCallback((fullscreen = false) => {
       setComposerFullscreen(fullscreen);
       setComposerOpen(true);
@@ -984,11 +1278,8 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
             toast.message(fa.issue.pendingSync);
             return;
          }
-         const returnSearch = searchWithActiveView(
-            location.search,
-            activeViewKey,
-            defaultActiveViewKey
-         );
+         saveIssueListScrollSnapshot(task.id);
+         const returnSearch = getCurrentIssueListReturnSearch();
          navigate(`/${orgId || 'taskara'}/issue/${encodeURIComponent(task.key)}`, {
             state: {
                from: {
@@ -1000,13 +1291,12 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
          });
       },
       [
-         activeViewKey,
-         defaultActiveViewKey,
+         getCurrentIssueListReturnSearch,
          location.hash,
          location.pathname,
-         location.search,
          navigate,
          orgId,
+         saveIssueListScrollSnapshot,
       ]
    );
 
@@ -1367,6 +1657,31 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
       openComposer(false);
    }
 
+   function openCreateViewDialog() {
+      setSaveMode('create');
+      setViewName('');
+      setViewShared(activeSavedView?.isShared ?? true);
+      setViewActionsOpen(false);
+      setSaveDialogOpen(true);
+   }
+
+   function openDuplicateViewDialog() {
+      setSaveMode('create');
+      setViewName(activeSavedView ? `${activeSavedView.name} کپی` : '');
+      setViewShared(activeSavedView?.isShared ?? true);
+      setViewActionsOpen(false);
+      setSaveDialogOpen(true);
+   }
+
+   function openUpdateViewDialog() {
+      if (!activeSavedView || !canUpdateActiveSavedView) return;
+      setSaveMode('update');
+      setViewName(activeSavedView.name);
+      setViewShared(activeSavedView.isShared);
+      setViewActionsOpen(false);
+      setSaveDialogOpen(true);
+   }
+
    async function createView() {
       try {
          const created = await taskaraRequest<TaskaraView>('/views', {
@@ -1391,7 +1706,7 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
    }
 
    async function updateView() {
-      if (!activeSavedView) return;
+      if (!activeSavedView || !canUpdateActiveSavedView) return;
       try {
          const updated = await taskaraRequest<TaskaraView>(`/views/${activeSavedView.id}`, {
             method: 'PATCH',
@@ -1415,7 +1730,8 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
    }
 
    async function deleteActiveView() {
-      if (!activeSavedView) return;
+      if (!activeSavedView || !canDeleteActiveSavedView) return;
+      if (!window.confirm(`${fa.issue.deleteView}\n${activeSavedView.name}`)) return;
       try {
          await taskaraRequest(`/views/${activeSavedView.id}`, { method: 'DELETE' });
          setViews((current) => current.filter((view) => view.id !== activeSavedView.id));
@@ -1423,6 +1739,7 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
          startTransition(() => {
             void load();
          });
+         setViewActionsOpen(false);
          toast.success(fa.issue.deleteView);
       } catch (err) {
          toast.error(err instanceof Error ? err.message : fa.issue.deleteView);
@@ -1511,33 +1828,82 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
 
                      <div className="flex items-center gap-1.5">
                         <Button
-                           aria-label={activeSavedView ? fa.issue.updateView : fa.issue.saveView}
+                           aria-label={fa.issue.saveAsNewView}
+                           size="icon"
+                           variant="ghost"
+                           className="size-8 rounded-full border border-white/8 bg-white/[0.03] text-zinc-400 hover:bg-white/[0.08] hover:text-zinc-100"
+                           onClick={openCreateViewDialog}
+                        >
+                           <Plus className="size-4" />
+                        </Button>
+                        <Button
+                           aria-label={fa.issue.updateView}
                            size="icon"
                            variant="ghost"
                            className={cn(
                               'size-8 rounded-full border border-white/8 bg-white/[0.03] text-zinc-400 hover:bg-white/[0.08] hover:text-zinc-100',
-                              !hasDraftChanges && 'hidden'
+                              (!activeSavedView || !canUpdateActiveSavedView || !hasDraftChanges) &&
+                                 'hidden'
                            )}
-                           onClick={() => {
-                              if (activeSavedView) {
-                                 setSaveMode('update');
-                                 setViewName(activeSavedView.name);
-                                 setViewShared(activeSavedView.isShared);
-                              } else {
-                                 setSaveMode('create');
-                                 setViewName('');
-                                 setViewShared(true);
-                              }
-                              setSaveDialogOpen(true);
-                           }}
+                           onClick={openUpdateViewDialog}
                         >
                            <Save className="size-4" />
                         </Button>
+                        {activeSavedView ? (
+                           <Popover open={viewActionsOpen} onOpenChange={setViewActionsOpen}>
+                              <PopoverTrigger asChild>
+                                 <Button
+                                    aria-label={fa.app.more}
+                                    size="icon"
+                                    variant="ghost"
+                                    className="size-8 rounded-full border border-white/8 bg-white/[0.03] text-zinc-400 hover:bg-white/[0.08] hover:text-zinc-100"
+                                 >
+                                    <MoreHorizontal className="size-4" />
+                                 </Button>
+                              </PopoverTrigger>
+                              <PopoverContent
+                                 align="end"
+                                 className="w-56 rounded-xl border-white/10 bg-[#202023] p-1.5 text-zinc-100 shadow-2xl [direction:rtl]"
+                                 sideOffset={8}
+                              >
+                                 <div className="space-y-1">
+                                    {canUpdateActiveSavedView ? (
+                                       <button
+                                          className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-sm text-zinc-300 transition hover:bg-white/[0.07] hover:text-zinc-100"
+                                          type="button"
+                                          onClick={openUpdateViewDialog}
+                                       >
+                                          <Save className="size-4 text-zinc-500" />
+                                          <span>{fa.issue.updateView}</span>
+                                       </button>
+                                    ) : null}
+                                    <button
+                                       className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-sm text-zinc-300 transition hover:bg-white/[0.07] hover:text-zinc-100"
+                                       type="button"
+                                       onClick={openDuplicateViewDialog}
+                                    >
+                                       <Copy className="size-4 text-zinc-500" />
+                                       <span>{fa.issue.saveAsNewView}</span>
+                                    </button>
+                                    {canDeleteActiveSavedView ? (
+                                       <button
+                                          className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-sm text-red-300 transition hover:bg-red-500/10 hover:text-red-200"
+                                          type="button"
+                                          onClick={() => void deleteActiveView()}
+                                       >
+                                          <Trash2 className="size-4 text-red-400" />
+                                          <span>{fa.issue.deleteView}</span>
+                                       </button>
+                                    ) : null}
+                                 </div>
+                              </PopoverContent>
+                           </Popover>
+                        ) : null}
                      </div>
                   </div>
                </div>
 
-               <div className="h-[calc(100%-61px)] overflow-auto">
+               <div ref={scrollContainerRef} className="h-[calc(100%-61px)] overflow-auto">
                   {loading ? (
                      <div className="p-4 text-sm text-zinc-500">{fa.app.loading}</div>
                   ) : activeTeam && scopedProjects.length === 0 && unassignedProjects.length > 0 ? (
@@ -1561,6 +1927,7 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
                               highlightedIndex={highlightedIndex}
                               labelOptions={labelOptions}
                               projects={scopedProjects}
+                              returnHighlightedTaskId={returnHighlightedTaskId}
                               selectedTaskId={selectedTaskId}
                               onAdd={() => openComposerForGroup(group)}
                               onDelete={(task) => void deleteTask(task)}
@@ -1598,6 +1965,7 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
                               highlightedIndex={highlightedIndex}
                               labelOptions={labelOptions}
                               projects={scopedProjects}
+                              returnHighlightedTaskId={returnHighlightedTaskId}
                               selectedTaskId={selectedTaskId}
                               onAdd={() => openComposerForGroup(group)}
                               onDelete={(task) => void deleteTask(task)}
@@ -3003,6 +3371,7 @@ function ListGroup({
    highlightedIndex,
    labelOptions,
    projects,
+   returnHighlightedTaskId,
    onAdd,
    onDelete,
    onSelect,
@@ -3024,6 +3393,7 @@ function ListGroup({
    highlightedIndex: number | null;
    labelOptions: Array<{ id: string; name: string }>;
    projects: TaskaraProject[];
+   returnHighlightedTaskId: string | null;
    onAdd: () => void;
    onDelete: (task: TaskaraTask) => void;
    onSelect: (task: TaskaraTask, absoluteIndex: number) => void;
@@ -3090,6 +3460,7 @@ function ListGroup({
                      key={task.id}
                      highlighted={group.offset + index === highlightedIndex}
                      displayProperties={displayProperties}
+                     returnHighlighted={returnHighlightedTaskId === task.id}
                      selected={selectedTaskId === task.id}
                      task={task}
                      onClick={() => {
@@ -3123,6 +3494,7 @@ function BoardGroup({
    highlightedIndex,
    labelOptions,
    projects,
+   returnHighlightedTaskId,
    onAdd,
    onDelete,
    onSelect,
@@ -3144,6 +3516,7 @@ function BoardGroup({
    highlightedIndex: number | null;
    labelOptions: Array<{ id: string; name: string }>;
    projects: TaskaraProject[];
+   returnHighlightedTaskId: string | null;
    onAdd: () => void;
    onDelete: (task: TaskaraTask) => void;
    onSelect: (task: TaskaraTask, absoluteIndex: number) => void;
@@ -3216,6 +3589,7 @@ function BoardGroup({
                         key={task.id}
                         highlighted={group.offset + index === highlightedIndex}
                         displayProperties={displayProperties}
+                        returnHighlighted={returnHighlightedTaskId === task.id}
                         selected={selectedTaskId === task.id}
                         task={task}
                         onClick={() => {
@@ -3246,6 +3620,7 @@ function IssueRow({
    task,
    selected,
    highlighted,
+   returnHighlighted,
    displayProperties,
    onClick,
    onStatusChange,
@@ -3263,6 +3638,7 @@ function IssueRow({
    task: TaskaraTask;
    selected: boolean;
    highlighted: boolean;
+   returnHighlighted: boolean;
    displayProperties: TaskViewDisplayProperty[];
    onClick: () => void;
    onStatusChange: (status: string) => void;
@@ -3288,8 +3664,10 @@ function IssueRow({
                   'group cursor-pointer',
                   'grid min-h-11 w-full grid-cols-[28px_88px_26px_minmax(0,1fr)_auto] items-center gap-2.5 rounded-lg px-3 text-start text-sm outline-none transition-colors duration-150 hover:bg-white/[0.028] hover:shadow-[inset_0_1px_0_rgb(255_255_255/0.015)]',
                   selected && 'bg-indigo-400/10',
+                  returnHighlighted && 'bg-indigo-400/8 ring-1 ring-inset ring-indigo-300/30',
                   highlighted && 'bg-white/[0.045] ring-1 ring-inset ring-indigo-400/35'
                )}
+               data-taskara-task-id={task.id}
                role="button"
                tabIndex={0}
                onClick={onClick}
@@ -3401,6 +3779,7 @@ function IssueCard({
    task,
    selected,
    highlighted,
+   returnHighlighted,
    displayProperties,
    onClick,
    onStatusChange,
@@ -3418,6 +3797,7 @@ function IssueCard({
    task: TaskaraTask;
    selected: boolean;
    highlighted: boolean;
+   returnHighlighted: boolean;
    displayProperties: TaskViewDisplayProperty[];
    onClick: () => void;
    onStatusChange: (status: string) => void;
@@ -3441,8 +3821,10 @@ function IssueCard({
                className={cn(
                   'w-full cursor-pointer rounded-lg border border-white/8 bg-[#202024] p-2.5 text-start transition hover:bg-[#252529]',
                   selected && 'border-indigo-400/40 bg-indigo-400/8',
+                  returnHighlighted && 'border-indigo-300/30 bg-indigo-400/8',
                   highlighted && 'ring-1 ring-inset ring-indigo-400/35'
                )}
+               data-taskara-task-id={task.id}
                role="button"
                tabIndex={0}
                onClick={onClick}

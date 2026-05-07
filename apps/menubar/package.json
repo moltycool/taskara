@@ -2,14 +2,45 @@
   "name": "@taskara/menubar",
   "version": "0.1.0",
   "private": true,
+  "description": "Taskara macOS menubar companion app",
+  "author": "Taskara",
   "type": "module",
   "main": "src/main.mjs",
   "scripts": {
     "dev": "electron .",
-    "start": "electron ."
+    "start": "electron .",
+    "build": "env -u npm_execpath -u npm_node_execpath electron-builder --mac --publish never",
+    "build:dir": "env -u npm_execpath -u npm_node_execpath electron-builder --mac dir --publish never",
+    "release": "bun run build"
   },
   "dependencies": {
-    "dotenv": "^16.4.5",
-    "electron": "^30.5.1"
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "electron": "30.5.1",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.taskara.menubar",
+    "productName": "Taskara Menubar",
+    "asar": true,
+    "npmRebuild": false,
+    "nodeGypRebuild": false,
+    "beforeBuild": "scripts/before-build.cjs",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "artifactName": "${productName}-${version}-${arch}.${ext}"
   }
 }

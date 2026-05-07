@@ -154,6 +154,46 @@ type GroupDescriptor = {
    offset: number;
 };
 
+const taskDragMimeType = 'application/x-taskara-task-id';
+
+function getDraggedTaskId(event: DragEvent<HTMLElement>) {
+   return event.dataTransfer.getData(taskDragMimeType) || event.dataTransfer.getData('text/plain');
+}
+
+function canStartTaskDrag(event: DragEvent<HTMLElement>) {
+   if (!(event.target instanceof HTMLElement)) return false;
+   return !Boolean(
+      event.target.closest(
+         'button, input, textarea, select, a, [contenteditable="true"], [data-taskara-no-drag="true"]'
+      )
+   );
+}
+
+function getGroupDropPatch(
+   grouping: TaskViewGrouping,
+   task: TaskaraTask,
+   groupKey: string
+): TaskUpdatePatch | null {
+   if (grouping === 'status') {
+      if (task.status === groupKey) return null;
+      return { status: groupKey };
+   }
+
+   if (grouping === 'priority') {
+      if (task.priority === groupKey) return null;
+      return { priority: groupKey };
+   }
+
+   if (grouping === 'project') {
+      if (task.project?.id === groupKey) return null;
+      return { projectId: groupKey };
+   }
+
+   const nextAssigneeId = groupKey === 'unassigned' ? null : groupKey;
+   if ((task.assignee?.id || null) === nextAssigneeId) return null;
+   return { assigneeId: nextAssigneeId };
+}
+
 const systemViewOrder: Array<{ key: SystemViewKey; label: string }> = [
    { key: 'all', label: fa.issue.all },
    { key: 'active', label: fa.issue.active },
@@ -785,6 +825,8 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
    const [viewName, setViewName] = useState('');
    const [viewShared, setViewShared] = useState(true);
    const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+   const [dropTargetGroupKey, setDropTargetGroupKey] = useState<string | null>(null);
    const composerFileInputRef = useRef<HTMLInputElement>(null);
    const scrollContainerRef = useRef<HTMLDivElement>(null);
    const stableTaskOrderRef = useRef<StableTaskOrderSnapshot | null>(null);
@@ -1255,6 +1297,10 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
    }, [draftView.groupBy, draftView.showEmptyGroups, filteredTasks, scopedProjects, users]);
 
    const visibleTasks = useMemo(() => groupedTasks.flatMap((group) => group.tasks), [groupedTasks]);
+   const visibleTaskById = useMemo(
+      () => new Map(visibleTasks.map((task) => [task.id, task])),
+      [visibleTasks]
+   );
 
    const viewCounts = useMemo(
       () => ({
@@ -1637,6 +1683,60 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
       }
    }
 
+   const handleTaskDragStart = useCallback((event: DragEvent<HTMLElement>, taskId: string) => {
+      if (!canStartTaskDrag(event)) {
+         event.preventDefault();
+         return;
+      }
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData(taskDragMimeType, taskId);
+      event.dataTransfer.setData('text/plain', taskId);
+      setDraggingTaskId(taskId);
+   }, []);
+
+   const handleTaskDragEnd = useCallback(() => {
+      setDraggingTaskId(null);
+      setDropTargetGroupKey(null);
+   }, []);
+
+   const handleGroupDragOver = useCallback(
+      (event: DragEvent<HTMLElement>, groupKey: string) => {
+         const draggedTaskId = getDraggedTaskId(event) || draggingTaskId;
+         if (!draggedTaskId) return;
+         const draggedTask = visibleTaskById.get(draggedTaskId);
+         if (!draggedTask) return;
+         const patch = getGroupDropPatch(draftView.groupBy, draggedTask, groupKey);
+         if (!patch) return;
+         event.preventDefault();
+         event.dataTransfer.dropEffect = 'move';
+         setDropTargetGroupKey(groupKey);
+      },
+      [draggingTaskId, draftView.groupBy, visibleTaskById]
+   );
+
+   const handleGroupDragLeave = useCallback((event: DragEvent<HTMLElement>, groupKey: string) => {
+      const currentTarget = event.currentTarget;
+      const nextTarget = event.relatedTarget;
+      if (nextTarget instanceof Node && currentTarget.contains(nextTarget)) return;
+      setDropTargetGroupKey((current) => (current === groupKey ? null : current));
+   }, []);
+
+   const handleGroupDrop = useCallback(
+      async (event: DragEvent<HTMLElement>, groupKey: string) => {
+         event.preventDefault();
+         const draggedTaskId = getDraggedTaskId(event) || draggingTaskId;
+         setDropTargetGroupKey(null);
+         setDraggingTaskId(null);
+         if (!draggedTaskId) return;
+         const draggedTask = visibleTaskById.get(draggedTaskId);
+         if (!draggedTask) return;
+         const patch = getGroupDropPatch(draftView.groupBy, draggedTask, groupKey);
+         if (!patch) return;
+         await updateTask(draggedTask, patch);
+      },
+      [draggingTaskId, draftView.groupBy, visibleTaskById]
+   );
+
    async function deleteTask(task: TaskaraTask) {
       if (!window.confirm(`${fa.issue.deleteConfirm}\n${task.key} ${task.title}`)) return;
 
@@ -1989,8 +2089,15 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
                               projects={scopedProjects}
                               returnHighlightedTaskId={returnHighlightedTaskId}
                               selectedTaskId={selectedTaskId}
+                              draggingTaskId={draggingTaskId}
+                              dropTargetGroupKey={dropTargetGroupKey}
                               onAdd={() => openComposerForGroup(group)}
                               onDelete={(task) => void deleteTask(task)}
+                              onDragEnd={handleTaskDragEnd}
+                              onDragStart={handleTaskDragStart}
+                              onGroupDragLeave={handleGroupDragLeave}
+                              onGroupDragOver={handleGroupDragOver}
+                              onGroupDrop={handleGroupDrop}
                               onOpen={openIssuePage}
                               onAssigneeChange={(task, assigneeId) =>
                                  void updateTask(task, { assigneeId })
@@ -2027,8 +2134,15 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
                               projects={scopedProjects}
                               returnHighlightedTaskId={returnHighlightedTaskId}
                               selectedTaskId={selectedTaskId}
+                              draggingTaskId={draggingTaskId}
+                              dropTargetGroupKey={dropTargetGroupKey}
                               onAdd={() => openComposerForGroup(group)}
                               onDelete={(task) => void deleteTask(task)}
+                              onDragEnd={handleTaskDragEnd}
+                              onDragStart={handleTaskDragStart}
+                              onGroupDragLeave={handleGroupDragLeave}
+                              onGroupDragOver={handleGroupDragOver}
+                              onGroupDrop={handleGroupDrop}
                               onOpen={openIssuePage}
                               onPriorityChange={(task, priority) =>
                                  void updateTask(task, { priority })
@@ -3429,11 +3543,18 @@ function ListGroup({
    displayProperties,
    selectedTaskId,
    highlightedIndex,
+   draggingTaskId,
+   dropTargetGroupKey,
    labelOptions,
    projects,
    returnHighlightedTaskId,
    onAdd,
    onDelete,
+   onDragStart,
+   onDragEnd,
+   onGroupDragOver,
+   onGroupDragLeave,
+   onGroupDrop,
    onSelect,
    onOpen,
    onStatusChange,
@@ -3451,11 +3572,18 @@ function ListGroup({
    displayProperties: TaskViewDisplayProperty[];
    selectedTaskId: string | null;
    highlightedIndex: number | null;
+   draggingTaskId: string | null;
+   dropTargetGroupKey: string | null;
    labelOptions: Array<{ id: string; name: string }>;
    projects: TaskaraProject[];
    returnHighlightedTaskId: string | null;
    onAdd: () => void;
    onDelete: (task: TaskaraTask) => void;
+   onDragStart: (event: DragEvent<HTMLElement>, taskId: string) => void;
+   onDragEnd: () => void;
+   onGroupDragOver: (event: DragEvent<HTMLElement>, groupKey: string) => void;
+   onGroupDragLeave: (event: DragEvent<HTMLElement>, groupKey: string) => void;
+   onGroupDrop: (event: DragEvent<HTMLElement>, groupKey: string) => void;
    onSelect: (task: TaskaraTask, absoluteIndex: number) => void;
    onOpen: (task: TaskaraTask) => void;
    onStatusChange: (task: TaskaraTask, status: string) => void;
@@ -3469,7 +3597,15 @@ function ListGroup({
    users: TaskaraUser[];
 }) {
    return (
-      <section className="pb-1">
+      <section
+         className={cn(
+            'pb-1 transition-colors',
+            dropTargetGroupKey === group.key && 'bg-indigo-400/[0.06]'
+         )}
+         onDragOver={(event) => onGroupDragOver(event, group.key)}
+         onDragLeave={(event) => onGroupDragLeave(event, group.key)}
+         onDrop={(event) => onGroupDrop(event, group.key)}
+      >
          <div className="sticky top-0 z-20 bg-[#101011] px-3 pt-2 pb-1">
             <div className="relative h-11 overflow-hidden rounded-lg bg-[#171719]">
                <div
@@ -3520,9 +3656,12 @@ function ListGroup({
                      key={task.id}
                      highlighted={group.offset + index === highlightedIndex}
                      displayProperties={displayProperties}
+                     dragging={draggingTaskId === task.id}
                      returnHighlighted={returnHighlightedTaskId === task.id}
                      selected={selectedTaskId === task.id}
                      task={task}
+                     onDragEnd={onDragEnd}
+                     onDragStart={onDragStart}
                      onClick={() => {
                         onSelect(task, group.offset + index);
                         onOpen(task);
@@ -3552,11 +3691,18 @@ function BoardGroup({
    displayProperties,
    selectedTaskId,
    highlightedIndex,
+   draggingTaskId,
+   dropTargetGroupKey,
    labelOptions,
    projects,
    returnHighlightedTaskId,
    onAdd,
    onDelete,
+   onDragStart,
+   onDragEnd,
+   onGroupDragOver,
+   onGroupDragLeave,
+   onGroupDrop,
    onSelect,
    onOpen,
    onStatusChange,
@@ -3574,11 +3720,18 @@ function BoardGroup({
    displayProperties: TaskViewDisplayProperty[];
    selectedTaskId: string | null;
    highlightedIndex: number | null;
+   draggingTaskId: string | null;
+   dropTargetGroupKey: string | null;
    labelOptions: Array<{ id: string; name: string }>;
    projects: TaskaraProject[];
    returnHighlightedTaskId: string | null;
    onAdd: () => void;
    onDelete: (task: TaskaraTask) => void;
+   onDragStart: (event: DragEvent<HTMLElement>, taskId: string) => void;
+   onDragEnd: () => void;
+   onGroupDragOver: (event: DragEvent<HTMLElement>, groupKey: string) => void;
+   onGroupDragLeave: (event: DragEvent<HTMLElement>, groupKey: string) => void;
+   onGroupDrop: (event: DragEvent<HTMLElement>, groupKey: string) => void;
    onSelect: (task: TaskaraTask, absoluteIndex: number) => void;
    onOpen: (task: TaskaraTask) => void;
    onStatusChange: (task: TaskaraTask, status: string) => void;
@@ -3594,9 +3747,13 @@ function BoardGroup({
    return (
       <section
          className={cn(
-            'flex h-full shrink-0 flex-col overflow-hidden rounded-lg border border-white/8 bg-[#171719]',
+            'flex h-full shrink-0 flex-col overflow-hidden rounded-lg border border-white/8 bg-[#171719] transition-colors',
+            dropTargetGroupKey === group.key && 'border-indigo-400/35 bg-indigo-400/[0.06]',
             collapsed ? 'w-[48px]' : 'w-[320px]'
          )}
+         onDragOver={(event) => onGroupDragOver(event, group.key)}
+         onDragLeave={(event) => onGroupDragLeave(event, group.key)}
+         onDrop={(event) => onGroupDrop(event, group.key)}
       >
          <div className="relative h-10 bg-[#171719]">
             <div
@@ -3649,9 +3806,12 @@ function BoardGroup({
                         key={task.id}
                         highlighted={group.offset + index === highlightedIndex}
                         displayProperties={displayProperties}
+                        dragging={draggingTaskId === task.id}
                         returnHighlighted={returnHighlightedTaskId === task.id}
                         selected={selectedTaskId === task.id}
                         task={task}
+                        onDragEnd={onDragEnd}
+                        onDragStart={onDragStart}
                         onClick={() => {
                            onSelect(task, group.offset + index);
                            onOpen(task);
@@ -3680,8 +3840,11 @@ function IssueRow({
    task,
    selected,
    highlighted,
+   dragging,
    returnHighlighted,
    displayProperties,
+   onDragStart,
+   onDragEnd,
    onClick,
    onStatusChange,
    onPriorityChange,
@@ -3698,8 +3861,11 @@ function IssueRow({
    task: TaskaraTask;
    selected: boolean;
    highlighted: boolean;
+   dragging: boolean;
    returnHighlighted: boolean;
    displayProperties: TaskViewDisplayProperty[];
+   onDragStart: (event: DragEvent<HTMLElement>, taskId: string) => void;
+   onDragEnd: () => void;
    onClick: () => void;
    onStatusChange: (status: string) => void;
    onPriorityChange: (priority: string) => void;
@@ -3723,13 +3889,17 @@ function IssueRow({
                className={cn(
                   'group cursor-pointer',
                   'grid min-h-11 w-full grid-cols-[28px_88px_26px_minmax(0,1fr)_auto] items-center gap-2.5 rounded-lg px-3 text-start text-sm outline-none transition-colors duration-150 hover:bg-white/[0.028] hover:shadow-[inset_0_1px_0_rgb(255_255_255/0.015)]',
+                  dragging && 'opacity-55',
                   selected && 'bg-indigo-400/10',
                   returnHighlighted && 'bg-indigo-400/8 ring-1 ring-inset ring-indigo-300/30',
                   highlighted && 'bg-white/[0.045] ring-1 ring-inset ring-indigo-400/35'
                )}
                data-taskara-task-id={task.id}
+               draggable
                role="button"
                tabIndex={0}
+               onDragEnd={onDragEnd}
+               onDragStart={(event) => onDragStart(event, task.id)}
                onClick={onClick}
                onKeyDown={(event) => {
                   if (event.currentTarget !== event.target) return;
@@ -3839,8 +4009,11 @@ function IssueCard({
    task,
    selected,
    highlighted,
+   dragging,
    returnHighlighted,
    displayProperties,
+   onDragStart,
+   onDragEnd,
    onClick,
    onStatusChange,
    onPriorityChange,
@@ -3857,8 +4030,11 @@ function IssueCard({
    task: TaskaraTask;
    selected: boolean;
    highlighted: boolean;
+   dragging: boolean;
    returnHighlighted: boolean;
    displayProperties: TaskViewDisplayProperty[];
+   onDragStart: (event: DragEvent<HTMLElement>, taskId: string) => void;
+   onDragEnd: () => void;
    onClick: () => void;
    onStatusChange: (status: string) => void;
    onPriorityChange: (priority: string) => void;
@@ -3880,13 +4056,17 @@ function IssueCard({
             <div
                className={cn(
                   'w-full cursor-pointer rounded-lg border border-white/8 bg-[#202024] p-2.5 text-start transition hover:bg-[#252529]',
+                  dragging && 'opacity-55',
                   selected && 'border-indigo-400/40 bg-indigo-400/8',
                   returnHighlighted && 'border-indigo-300/30 bg-indigo-400/8',
                   highlighted && 'ring-1 ring-inset ring-indigo-400/35'
                )}
                data-taskara-task-id={task.id}
+               draggable
                role="button"
                tabIndex={0}
+               onDragEnd={onDragEnd}
+               onDragStart={(event) => onDragStart(event, task.id)}
                onClick={onClick}
                onKeyDown={(event) => {
                   if (event.currentTarget !== event.target) return;

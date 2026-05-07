@@ -1,5 +1,15 @@
 import React from 'react';
 import { AppSidebar } from '@/components/layout/sidebar/app-sidebar';
+import {
+   CommandDialog,
+   CommandEmpty,
+   CommandGroup,
+   CommandInput,
+   CommandItem,
+   CommandList,
+   CommandSeparator,
+   CommandShortcut,
+} from '@/components/ui/command';
 import { Button } from '@/components/ui/button';
 import {
    Dialog,
@@ -9,11 +19,13 @@ import {
    DialogTitle,
 } from '@/components/ui/dialog';
 import { SidebarProvider } from '@/components/ui/sidebar';
-import { ShortcutKey } from '@/components/taskara/linear-ui';
+import { LinearAvatar, ProjectGlyph, ShortcutKey, StatusIcon } from '@/components/taskara/linear-ui';
 import { fa } from '@/lib/fa-copy';
+import { useWorkspaceTaskSync } from '@/lib/task-sync-provider';
+import type { TaskaraTask, TaskaraView } from '@/lib/taskara-types';
 import { areDesktopNotificationsEnabled, setDesktopNotificationsEnabled as persistDesktopNotificationsEnabled } from '@/lib/notification-service-worker';
 import { cn } from '@/lib/utils';
-import { Bell, CalendarDays, FolderKanban, ListTodo, Megaphone, Plus, Search, Settings, Trophy, Users, UsersRound , Activity } from 'lucide-react';
+import { Activity, Bell, CalendarDays, FolderKanban, LayoutTemplate, ListTodo, Megaphone, Plus, Search, Settings, Trophy, Users, UsersRound } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 interface MainLayoutProps {
@@ -104,10 +116,66 @@ const isEmptyHeader = (header: React.ReactNode | undefined): boolean => {
    return false;
 };
 
+type CommandAction = {
+   id: string;
+   label: string;
+   description: string;
+   icon: React.ComponentType<{ className?: string }>;
+   shortcut?: string;
+   run: () => void;
+};
+
+const COMMAND_RESULT_LIMIT = 6;
+
+function normalizeCommandSearchValue(value: string | null | undefined) {
+   return (value || '').toLocaleLowerCase('fa').trim().replace(/\s+/g, ' ');
+}
+
+function scoreCommandMatch(query: string, values: Array<string | null | undefined>) {
+   if (!query) return 0;
+
+   let bestScore = 0;
+   for (const value of values) {
+      const normalized = normalizeCommandSearchValue(value);
+      if (!normalized) continue;
+      if (normalized === query) return 250;
+      if (normalized.startsWith(query)) bestScore = Math.max(bestScore, 180);
+
+      const index = normalized.indexOf(query);
+      if (index >= 0) {
+         bestScore = Math.max(bestScore, Math.max(80, 150 - index));
+      }
+
+      for (const word of normalized.split(' ')) {
+         if (word.startsWith(query)) {
+            bestScore = Math.max(bestScore, 120);
+         }
+      }
+   }
+
+   return bestScore;
+}
+
+function takeTopMatches<T>(items: T[], scorer: (item: T) => number, limit = COMMAND_RESULT_LIMIT) {
+   return items
+      .map((item) => ({ item, score: scorer(item) }))
+      .filter((entry) => entry.score > 0)
+      .sort((left, right) => right.score - left.score)
+      .slice(0, limit)
+      .map((entry) => entry.item);
+}
+
+function formatViewTarget(view: TaskaraView, teams: Array<{ id: string; slug: string }>, fallback = 'all') {
+   if (!view.state.teamId || view.state.teamId === fallback) return fallback;
+   return teams.find((team) => team.id === view.state.teamId)?.slug || fallback;
+}
+
 export default function MainLayout({ children, header, headersNumber = 2, showSidebar = true }: MainLayoutProps) {
    const navigate = useNavigate();
    const location = useLocation();
+   const { tasks, projects, teams, users, views } = useWorkspaceTaskSync();
    const [commandOpen, setCommandOpen] = React.useState(false);
+   const [commandQuery, setCommandQuery] = React.useState('');
    const [shortcutsOpen, setShortcutsOpen] = React.useState(false);
    const [notificationPromptOpen, setNotificationPromptOpen] = React.useState(false);
    const [notificationPromptDontShowAgain, setNotificationPromptDontShowAgain] = React.useState(false);
@@ -277,99 +345,232 @@ export default function MainLayout({ children, header, headersNumber = 2, showSi
       };
    }, []);
 
-   const commandItems = [
-      {
-         label: fa.command.createIssue,
-         description: fa.command.createIssueDescription,
-         icon: Plus,
-         shortcut: 'C / ز',
-         run: openCreateIssue,
-      },
-      {
-         label: fa.command.createProject,
-         description: fa.command.createProjectDescription,
-         icon: FolderKanban,
-         shortcut: '+',
-         run: openCreateProject,
-      },
-      {
-         label: fa.command.goIssues,
-         description: fa.pages.issuesDescription,
-         icon: ListTodo,
-         shortcut: 'G I',
-         run: () => navigate(`/${orgId}/team/all/all`),
-      },
-      {
-         label: fa.command.goAllTasks,
-         description: fa.pages.allTasksDescription,
-         icon: ListTodo,
-         shortcut: 'G A',
-         run: () => navigate(`/${orgId}/tasks`),
-      },
-      {
-         label: fa.command.goInbox,
-         description: fa.pages.inboxDescription,
-         icon: Bell,
-         shortcut: 'G N',
-         run: () => navigate(`/${orgId}/inbox`),
-      },
-      {
-         label: fa.nav.announcements,
-         description: fa.pages.announcementsDescription,
-         icon: Megaphone,
-         shortcut: 'G B',
-         run: () => navigate(`/${orgId}/announcements`),
-      },
-      {
-         label: fa.nav.meetings,
-         description: fa.pages.meetingsDescription,
-         icon: CalendarDays,
-         shortcut: 'G E',
-         run: () => navigate(`/${orgId}/meetings`),
-      },
-      {
-         label: fa.command.goProjects,
-         description: fa.pages.projectsDescription,
-         icon: FolderKanban,
-         shortcut: 'G P',
-         run: () => navigate(`/${orgId}/projects`),
-      },
-      {
-         label: fa.command.goLeaderboard,
-         description: fa.pages.leaderboardDescription,
-         icon: Trophy,
-         shortcut: 'G L',
-         run: () => navigate(`/${orgId}/leaderboard`),
-      },
-     {
-         label: fa.command.goHeartbeat,
-         description: fa.pages.heartbeatDescription,
-         icon: Activity,
-         shortcut: 'G H',
-         run: () => navigate(`/${orgId}/heartbeat`),
-      },
-      {
-         label: fa.command.goMembers,
-         description: fa.pages.membersDescription,
-         icon: Users,
-         shortcut: 'G M',
-         run: () => navigate(`/${orgId}/members`),
-      },
-      {
-         label: fa.command.goTeams,
-         description: fa.pages.teamsDescription,
-         icon: UsersRound,
-         shortcut: 'G T',
-         run: () => navigate(`/${orgId}/teams`),
-      },
-      {
-         label: fa.command.goSettings,
-         description: fa.pages.settingsDescription,
-         icon: Settings,
-         shortcut: 'G S',
-         run: () => navigate(`/${orgId}/settings/profile`),
-      },
-   ];
+   React.useEffect(() => {
+      if (!commandOpen) {
+         setCommandQuery('');
+      }
+   }, [commandOpen]);
+
+   const runCommand = React.useCallback((run: () => void) => {
+      setCommandOpen(false);
+      setCommandQuery('');
+      run();
+   }, []);
+
+   const commandActions = React.useMemo<CommandAction[]>(
+      () => [
+         {
+            id: 'create-issue',
+            label: fa.command.createIssue,
+            description: fa.command.createIssueDescription,
+            icon: Plus,
+            shortcut: 'C / ز',
+            run: openCreateIssue,
+         },
+         {
+            id: 'create-project',
+            label: fa.command.createProject,
+            description: fa.command.createProjectDescription,
+            icon: FolderKanban,
+            run: openCreateProject,
+         },
+         {
+            id: 'go-issues',
+            label: fa.command.goIssues,
+            description: fa.pages.issuesDescription,
+            icon: ListTodo,
+            run: () => navigate(`/${orgId}/team/all/all`),
+         },
+         {
+            id: 'go-all-tasks',
+            label: fa.command.goAllTasks,
+            description: fa.pages.allTasksDescription,
+            icon: ListTodo,
+            run: () => navigate(`/${orgId}/tasks`),
+         },
+         {
+            id: 'go-inbox',
+            label: fa.command.goInbox,
+            description: fa.pages.inboxDescription,
+            icon: Bell,
+            run: () => navigate(`/${orgId}/inbox`),
+         },
+         {
+            id: 'go-announcements',
+            label: fa.nav.announcements,
+            description: fa.pages.announcementsDescription,
+            icon: Megaphone,
+            run: () => navigate(`/${orgId}/announcements`),
+         },
+         {
+            id: 'go-meetings',
+            label: fa.nav.meetings,
+            description: fa.pages.meetingsDescription,
+            icon: CalendarDays,
+            run: () => navigate(`/${orgId}/meetings`),
+         },
+         {
+            id: 'go-projects',
+            label: fa.command.goProjects,
+            description: fa.pages.projectsDescription,
+            icon: FolderKanban,
+            run: () => navigate(`/${orgId}/projects`),
+         },
+         {
+            id: 'go-leaderboard',
+            label: fa.command.goLeaderboard,
+            description: fa.pages.leaderboardDescription,
+            icon: Trophy,
+            run: () => navigate(`/${orgId}/leaderboard`),
+         },
+         {
+            id: 'go-heartbeat',
+            label: fa.command.goHeartbeat,
+            description: fa.pages.heartbeatDescription,
+            icon: Activity,
+            run: () => navigate(`/${orgId}/heartbeat`),
+         },
+         {
+            id: 'go-members',
+            label: fa.command.goMembers,
+            description: fa.pages.membersDescription,
+            icon: Users,
+            run: () => navigate(`/${orgId}/members`),
+         },
+         {
+            id: 'go-teams',
+            label: fa.command.goTeams,
+            description: fa.pages.teamsDescription,
+            icon: UsersRound,
+            run: () => navigate(`/${orgId}/teams`),
+         },
+         {
+            id: 'go-settings',
+            label: fa.command.goSettings,
+            description: fa.pages.settingsDescription,
+            icon: Settings,
+            run: () => navigate(`/${orgId}/settings/profile`),
+         },
+      ],
+      [navigate, openCreateIssue, openCreateProject, orgId]
+   );
+
+   const normalizedCommandQuery = React.useMemo(
+      () => normalizeCommandSearchValue(commandQuery).slice(0, 120),
+      [commandQuery]
+   );
+   const hasCommandQuery = Boolean(normalizedCommandQuery);
+
+   const visibleCommandActions = React.useMemo(() => {
+      if (!hasCommandQuery) return commandActions;
+      return takeTopMatches(
+         commandActions,
+         (item) =>
+            scoreCommandMatch(normalizedCommandQuery, [
+               item.label,
+               item.description,
+               item.shortcut,
+            ]),
+         8
+      );
+   }, [commandActions, hasCommandQuery, normalizedCommandQuery]);
+
+   const issueResults = React.useMemo<TaskaraTask[]>(() => {
+      if (!hasCommandQuery) return [];
+      return takeTopMatches(tasks, (task) =>
+         scoreCommandMatch(normalizedCommandQuery, [
+            task.key,
+            task.title,
+            task.description,
+            task.project?.name,
+            task.project?.keyPrefix,
+            task.assignee?.name,
+         ])
+      );
+   }, [hasCommandQuery, normalizedCommandQuery, tasks]);
+
+   const projectResults = React.useMemo(() => {
+      if (!hasCommandQuery) return [];
+      return takeTopMatches(projects, (project) =>
+         scoreCommandMatch(normalizedCommandQuery, [
+            project.name,
+            project.keyPrefix,
+            project.description,
+            project.team?.name,
+            project.team?.slug,
+         ])
+      );
+   }, [hasCommandQuery, normalizedCommandQuery, projects]);
+
+   const viewResults = React.useMemo<TaskaraView[]>(() => {
+      if (!hasCommandQuery) return [];
+      return takeTopMatches(views, (view) => {
+         const teamName =
+            teams.find((team) => team.id === view.state.teamId)?.name || '';
+         return scoreCommandMatch(normalizedCommandQuery, [
+            view.name,
+            teamName,
+            view.state.teamId,
+         ]);
+      });
+   }, [hasCommandQuery, normalizedCommandQuery, teams, views]);
+
+   const teamResults = React.useMemo(() => {
+      if (!hasCommandQuery) return [];
+      return takeTopMatches(teams, (team) =>
+         scoreCommandMatch(normalizedCommandQuery, [team.name, team.slug, team.description])
+      );
+   }, [hasCommandQuery, normalizedCommandQuery, teams]);
+
+   const memberResults = React.useMemo(() => {
+      if (!hasCommandQuery) return [];
+      return takeTopMatches(users, (user) =>
+         scoreCommandMatch(normalizedCommandQuery, [
+            user.name,
+            user.email,
+            user.phone,
+            user.mattermostUsername,
+         ])
+      );
+   }, [hasCommandQuery, normalizedCommandQuery, users]);
+
+   const focusedMember = React.useMemo(() => {
+      if (!hasCommandQuery || memberResults.length === 0) return null;
+      return memberResults[0];
+   }, [hasCommandQuery, memberResults]);
+
+   const focusedMemberAssignedIssues = React.useMemo(() => {
+      if (!focusedMember) return [];
+      return tasks
+         .filter((task) => task.assignee?.id === focusedMember.id)
+         .sort((left, right) => {
+            const leftDate =
+               Date.parse(left.updatedAt || '') ||
+               Date.parse(left.createdAt || '') ||
+               0;
+            const rightDate =
+               Date.parse(right.updatedAt || '') ||
+               Date.parse(right.createdAt || '') ||
+               0;
+            return rightDate - leftDate;
+         })
+         .slice(0, COMMAND_RESULT_LIMIT);
+   }, [focusedMember, tasks]);
+
+   const genericIssueResults = React.useMemo(() => {
+      if (!focusedMember) return issueResults;
+      return issueResults.filter((task) => task.assignee?.id !== focusedMember.id);
+   }, [focusedMember, issueResults]);
+
+   const hasEntityMatches =
+      genericIssueResults.length > 0 ||
+      projectResults.length > 0 ||
+      viewResults.length > 0 ||
+      teamResults.length > 0 ||
+      memberResults.length > 0 ||
+      focusedMemberAssignedIssues.length > 0;
+   const hasAnyCommandItem =
+      visibleCommandActions.length > 0 || hasEntityMatches || hasCommandQuery;
 
    return (
       <SidebarProvider>
@@ -388,51 +589,242 @@ export default function MainLayout({ children, header, headersNumber = 2, showSi
                </div>
             </div>
          </div>
-         <Dialog open={commandOpen} onOpenChange={setCommandOpen}>
-            <DialogContent
-               aria-label={fa.command.title}
-               className="max-w-[640px] gap-0 overflow-hidden border-white/10 bg-[#1d1d20] p-0 shadow-2xl"
-            >
-               <DialogHeader className="border-b border-white/8 px-4 py-3">
-                  <DialogTitle className="flex items-center gap-2 text-sm">
-                     <Search className="size-4 text-zinc-500" />
-                     {fa.command.title}
-                  </DialogTitle>
-                  <DialogDescription className="sr-only">
-                     {fa.command.description}
-                  </DialogDescription>
-               </DialogHeader>
-               <div className="max-h-[440px] overflow-y-auto p-2" data-testid="command-menu">
-                  {commandItems.map((item) => {
-                     const Icon = item.icon;
-                     return (
-                        <button
-                           key={item.label}
-                           className="group flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-start outline-none transition hover:bg-white/6 focus:bg-white/8"
-                           type="button"
-                           onClick={() => {
-                              setCommandOpen(false);
-                              item.run();
-                           }}
-                        >
-                           <span className="flex min-w-0 items-center gap-3">
-                              <span className="inline-flex size-7 items-center justify-center rounded-md bg-white/6 text-zinc-400 group-hover:text-zinc-100">
-                                 <Icon className="size-4" />
-                              </span>
-                              <span className="min-w-0">
-                                 <span className="block truncate text-sm font-medium text-zinc-200">
-                                    {item.label}
+         <CommandDialog
+            description={fa.command.description}
+            contentClassName="max-w-[760px] sm:max-w-[760px]"
+            commandClassName="[&_[data-slot=command-input-wrapper]]:h-14 [&_[data-slot=command-input-wrapper]]:border-b-0 [&_[data-slot=command-input-wrapper]]:px-4 [&_[data-slot=command-input]]:h-12 [&_[data-slot=command-input]]:text-base [&_[data-slot=command-input]]:font-normal [&_[data-slot=command-input]]:placeholder:font-normal [&_[data-slot=command-input]]:placeholder:text-zinc-600"
+            open={commandOpen}
+            title={fa.command.title}
+            onOpenChange={setCommandOpen}
+         >
+            <CommandInput
+               value={commandQuery}
+               onValueChange={setCommandQuery}
+               placeholder="دستور اجرا کن یا در کارها، پروژه‌ها و اعضا جستجو کن..."
+            />
+            <CommandList className="max-h-[520px] p-1.5" data-testid="command-menu">
+               {!hasAnyCommandItem ? (
+                  <CommandEmpty>
+                     {hasCommandQuery ? 'نتیجه‌ای پیدا نشد.' : 'فرمانی برای نمایش وجود ندارد.'}
+                  </CommandEmpty>
+               ) : null}
+               {visibleCommandActions.length > 0 ? (
+                  <CommandGroup heading={hasCommandQuery ? 'دستورها' : 'میانبرها'}>
+                     {visibleCommandActions.map((item) => {
+                        const Icon = item.icon;
+                        return (
+                           <CommandItem
+                              key={item.id}
+                              value={`action-${item.id}`}
+                              keywords={[item.label, item.description, item.shortcut || '']}
+                              className="group rounded-md px-2 py-2.5"
+                              onSelect={() => runCommand(item.run)}
+                           >
+                              <span className="flex min-w-0 flex-1 items-center gap-3">
+                                 <span className="inline-flex size-7 items-center justify-center rounded-md bg-white/6 text-zinc-400 group-data-[selected=true]:text-zinc-100">
+                                    <Icon className="size-4" />
                                  </span>
-                                 <span className="block truncate text-xs text-zinc-500">{item.description}</span>
+                                 <span className="min-w-0 flex-1">
+                                    <span className="block truncate text-sm font-medium text-zinc-200">{item.label}</span>
+                                    <span className="block truncate text-xs text-zinc-500">{item.description}</span>
+                                 </span>
+                              </span>
+                              {item.shortcut ? <CommandShortcut className="ms-auto">{item.shortcut}</CommandShortcut> : null}
+                           </CommandItem>
+                        );
+                     })}
+                  </CommandGroup>
+               ) : null}
+               {hasCommandQuery ? <CommandSeparator /> : null}
+               {focusedMember && focusedMemberAssignedIssues.length > 0 ? (
+                  <CommandGroup heading={`کارهای سپرده‌شده به ${focusedMember.name}`}>
+                     {focusedMemberAssignedIssues.map((task) => (
+                        <CommandItem
+                           key={`assigned-${task.id}`}
+                           value={`assigned-issue-${task.id}`}
+                           keywords={[
+                              focusedMember.name,
+                              focusedMember.email,
+                              task.key,
+                              task.title,
+                              task.project?.name || '',
+                              task.project?.keyPrefix || '',
+                           ]}
+                           className="rounded-md px-2 py-2"
+                           onSelect={() => runCommand(() => navigate(`/${orgId}/issue/${task.key}`))}
+                        >
+                           <StatusIcon status={task.status} />
+                           <span className="min-w-0">
+                              <span className="block truncate text-sm text-zinc-200">{task.title}</span>
+                              <span className="block truncate text-xs text-zinc-500">
+                                 {task.key}
+                                 {task.project?.name ? ` • ${task.project.name}` : ''}
                               </span>
                            </span>
-                           <ShortcutKey>{item.shortcut}</ShortcutKey>
-                        </button>
-                     );
-                  })}
-               </div>
-            </DialogContent>
-         </Dialog>
+                        </CommandItem>
+                     ))}
+                  </CommandGroup>
+               ) : null}
+               {genericIssueResults.length > 0 ? (
+                  <CommandGroup heading="کارها">
+                     {genericIssueResults.map((task) => (
+                        <CommandItem
+                           key={task.id}
+                           value={`issue-${task.id}`}
+                           keywords={[
+                              task.key,
+                              task.title,
+                              task.project?.name || '',
+                              task.project?.keyPrefix || '',
+                              task.assignee?.name || '',
+                           ]}
+                           className="rounded-md px-2 py-2"
+                           onSelect={() => runCommand(() => navigate(`/${orgId}/issue/${task.key}`))}
+                        >
+                           <StatusIcon status={task.status} />
+                           <span className="min-w-0">
+                              <span className="block truncate text-sm text-zinc-200">{task.title}</span>
+                              <span className="block truncate text-xs text-zinc-500">
+                                 {task.key}
+                                 {task.project?.name ? ` • ${task.project.name}` : ''}
+                              </span>
+                           </span>
+                        </CommandItem>
+                     ))}
+                  </CommandGroup>
+               ) : null}
+               {projectResults.length > 0 ? (
+                  <CommandGroup heading="پروژه‌ها">
+                     {projectResults.map((project) => (
+                        <CommandItem
+                           key={project.id}
+                           value={`project-${project.id}`}
+                           keywords={[
+                              project.name,
+                              project.keyPrefix,
+                              project.description || '',
+                              project.team?.name || '',
+                              project.team?.slug || '',
+                           ]}
+                           className="rounded-md px-2 py-2"
+                           onSelect={() =>
+                              runCommand(() =>
+                                 navigate(
+                                    project.team?.slug
+                                       ? `/${orgId}/team/${project.team.slug}/projects`
+                                       : `/${orgId}/projects`
+                                 )
+                              )
+                           }
+                        >
+                           <ProjectGlyph
+                              name={project.name}
+                              className="size-5 rounded-md"
+                              iconClassName="size-3.5"
+                           />
+                           <span className="min-w-0">
+                              <span className="block truncate text-sm text-zinc-200">{project.name}</span>
+                              <span className="block truncate text-xs text-zinc-500">
+                                 {project.keyPrefix}
+                                 {project.team?.name ? ` • ${project.team.name}` : ''}
+                              </span>
+                           </span>
+                        </CommandItem>
+                     ))}
+                  </CommandGroup>
+               ) : null}
+               {viewResults.length > 0 ? (
+                  <CommandGroup heading="نماها">
+                     {viewResults.map((view) => (
+                        <CommandItem
+                           key={view.id}
+                           value={`view-${view.id}`}
+                           keywords={[
+                              view.name,
+                              view.state.teamId || '',
+                              teams.find((team) => team.id === view.state.teamId)?.name || '',
+                           ]}
+                           className="rounded-md px-2 py-2"
+                           onSelect={() =>
+                              runCommand(() =>
+                                 navigate(
+                                    `/${orgId}/team/${formatViewTarget(view, teams)}/all?view=${encodeURIComponent(view.id)}`
+                                 )
+                              )
+                           }
+                        >
+                           <LayoutTemplate className="size-4 text-zinc-400" />
+                           <span className="min-w-0">
+                              <span className="block truncate text-sm text-zinc-200">{view.name}</span>
+                              <span className="block truncate text-xs text-zinc-500">
+                                 {teams.find((team) => team.id === view.state.teamId)?.name || fa.issue.all}
+                              </span>
+                           </span>
+                        </CommandItem>
+                     ))}
+                  </CommandGroup>
+               ) : null}
+               {teamResults.length > 0 ? (
+                  <CommandGroup heading="تیم‌ها">
+                     {teamResults.map((team) => (
+                        <CommandItem
+                           key={team.id}
+                           value={`team-${team.id}`}
+                           keywords={[team.name, team.slug, team.description || '']}
+                           className="rounded-md px-2 py-2"
+                           onSelect={() => runCommand(() => navigate(`/${orgId}/team/${team.slug}/all`))}
+                        >
+                           <UsersRound className="size-4 text-zinc-400" />
+                           <span className="min-w-0">
+                              <span className="block truncate text-sm text-zinc-200">{team.name}</span>
+                              <span className="block truncate text-xs text-zinc-500">{team.slug}</span>
+                           </span>
+                        </CommandItem>
+                     ))}
+                  </CommandGroup>
+               ) : null}
+               {memberResults.length > 0 ? (
+                  <CommandGroup heading="اعضا">
+                     {memberResults.map((user) => (
+                        <CommandItem
+                           key={user.id}
+                           value={`member-${user.id}`}
+                           keywords={[user.name, user.email, user.phone || '', user.mattermostUsername || '']}
+                           className="rounded-md px-2 py-2"
+                           onSelect={() => runCommand(() => navigate(`/${orgId}/members`))}
+                        >
+                           <LinearAvatar className="size-5" name={user.name} src={user.avatarUrl} />
+                           <span className="min-w-0">
+                              <span className="block truncate text-sm text-zinc-200">{user.name}</span>
+                              <span className="block truncate text-xs text-zinc-500">{user.email}</span>
+                           </span>
+                        </CommandItem>
+                     ))}
+                  </CommandGroup>
+               ) : null}
+               {hasCommandQuery ? (
+                  <>
+                     <CommandSeparator />
+                     <CommandGroup heading="جستجوی گسترده">
+                        <CommandItem
+                           value="search-all-issues"
+                           keywords={[normalizedCommandQuery]}
+                           className="rounded-md px-2 py-2"
+                           onSelect={() => runCommand(() => navigate(`/${orgId}/team/all/all`))}
+                        >
+                           <Search className="size-4 text-zinc-400" />
+                           <span className="min-w-0">
+                              <span className="block truncate text-sm text-zinc-200">
+                                 جستجو در تمام کارها
+                              </span>
+                              <span className="block truncate text-xs text-zinc-500">{normalizedCommandQuery}</span>
+                           </span>
+                        </CommandItem>
+                     </CommandGroup>
+                  </>
+               ) : null}
+            </CommandList>
+         </CommandDialog>
          <Dialog open={shortcutsOpen} onOpenChange={setShortcutsOpen}>
             <DialogContent aria-label={fa.shortcuts.title} className="max-w-[640px] bg-[#1d1d20]">
                <DialogHeader>

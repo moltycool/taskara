@@ -253,6 +253,7 @@ export const fa = {
       publishDraftNoRecipients: 'برای انتشار حداقل یک مخاطب لازم است.',
       publishedToast: 'اطلاعیه منتشر شد.',
       markRead: 'خواندم',
+      read: 'خوانده شده',
       sendSms: 'ارسال پیامک اطلاعیه',
       smsSent: 'پیامک اطلاعیه ارسال شد.',
       smsSummary: 'ارسال‌شده: {sent}، بدون شماره: {skipped}، ناموفق: {failed}',

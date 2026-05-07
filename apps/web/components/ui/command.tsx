@@ -29,11 +29,15 @@ function Command({ className, ...props }: React.ComponentProps<typeof CommandPri
 function CommandDialog({
    title = 'Command Palette',
    description = 'Search for a command to run...',
+   contentClassName,
+   commandClassName,
    children,
    ...props
 }: React.ComponentProps<typeof Dialog> & {
    title?: string;
    description?: string;
+   contentClassName?: string;
+   commandClassName?: string;
 }) {
    return (
       <Dialog {...props}>
@@ -41,8 +45,13 @@ function CommandDialog({
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription>{description}</DialogDescription>
          </DialogHeader>
-         <DialogContent className="overflow-hidden p-0">
-            <Command className="[&_[cmdk-group-heading]]:text-muted-foreground **:data-[slot=command-input-wrapper]:h-10 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group]]:px-2 [&_[cmdk-group]:not([hidden])_~[cmdk-group]]:pt-0 [&_[cmdk-input-wrapper]_svg]:h-4 [&_[cmdk-input-wrapper]_svg]:w-4 [&_[cmdk-input]]:h-10 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-2 [&_[cmdk-item]_svg]:h-4 [&_[cmdk-item]_svg]:w-4">
+         <DialogContent showCloseButton={false} className={cn('overflow-hidden p-0', contentClassName)}>
+            <Command
+               className={cn(
+                  "[&_[cmdk-group-heading]]:text-muted-foreground **:data-[slot=command-input-wrapper]:h-10 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group]]:px-2 [&_[cmdk-group]:not([hidden])_~[cmdk-group]]:pt-0 [&_[cmdk-input-wrapper]_svg]:h-4 [&_[cmdk-input-wrapper]_svg]:w-4 [&_[cmdk-input]]:h-10 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-2 [&_[cmdk-item]_svg]:h-4 [&_[cmdk-item]_svg]:w-4",
+                  commandClassName
+               )}
+            >
                {children}
             </Command>
          </DialogContent>
@@ -135,7 +144,7 @@ function CommandShortcut({ className, ...props }: React.ComponentProps<'span'>) 
    return (
       <span
          data-slot="command-shortcut"
-         className={cn('text-muted-foreground ml-auto text-xs tracking-widest', className)}
+         className={cn('text-muted-foreground ms-auto text-xs tracking-widest', className)}
          {...props}
       />
    );

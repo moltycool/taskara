@@ -78,8 +78,14 @@ const reportAnalyzeInputSchema = z.object({
 
 const TASK_STATUS_VALUES = ['BACKLOG', 'TODO', 'IN_PROGRESS', 'IN_REVIEW', 'BLOCKED', 'DONE', 'CANCELED'] as const;
 const TASK_PRIORITY_VALUES = ['NO_PRIORITY', 'LOW', 'MEDIUM', 'HIGH', 'URGENT'] as const;
-const assistantActionValues = ['create_task', 'update_task', 'clarify', 'unsupported'] as const;
-const assistantOperationValues = ['create_task', 'update_task'] as const;
+const assistantActionValues = ['create_task', 'update_task', 'query_tasks', 'bulk_update_tasks', 'clarify', 'unsupported'] as const;
+const assistantOperationValues = ['create_task', 'update_task', 'query_tasks', 'bulk_update_tasks'] as const;
+const assistantQueryModeValues = [
+  'latest_task_for_user',
+  'latest_done_task_for_user',
+  'latest_done_task_for_each_user',
+  'search_tasks'
+] as const;
 
 const aiAssistantMessageSchema = z.object({
   message: z.string().trim().max(4000).default(''),
@@ -137,10 +143,43 @@ const assistantTaskUpdateSchema = z.object({
   labels: z.array(z.string().trim().min(1).max(40)).max(12).optional()
 });
 
+const assistantTaskQuerySchema = z.object({
+  mode: z.enum(assistantQueryModeValues).optional().default('latest_task_for_user'),
+  projectId: z.string().uuid().nullable().optional(),
+  projectHint: z.string().trim().min(1).max(160).nullable().optional(),
+  assigneeId: z.string().uuid().nullable().optional(),
+  assigneeHint: z.string().trim().min(1).max(160).nullable().optional(),
+  statuses: z.array(z.enum(TASK_STATUS_VALUES)).max(TASK_STATUS_VALUES.length).optional().default([]),
+  priorities: z.array(z.enum(TASK_PRIORITY_VALUES)).max(TASK_PRIORITY_VALUES.length).optional().default([]),
+  keywords: z.array(z.string().trim().min(1).max(80)).max(6).optional().default([]),
+  limit: z.number().int().min(1).max(20).optional().default(5)
+});
+
+const assistantBulkUpdateSchema = z.object({
+  projectId: z.string().uuid().nullable().optional(),
+  projectHint: z.string().trim().min(1).max(160).nullable().optional(),
+  assigneeId: z.string().uuid().nullable().optional(),
+  assigneeHint: z.string().trim().min(1).max(160).nullable().optional(),
+  statuses: z.array(z.enum(TASK_STATUS_VALUES)).max(TASK_STATUS_VALUES.length).optional().default([]),
+  priorities: z.array(z.enum(TASK_PRIORITY_VALUES)).max(TASK_PRIORITY_VALUES.length).optional().default([]),
+  keywords: z.array(z.string().trim().min(1).max(80)).max(6).optional().default([]),
+  limit: z.number().int().min(1).max(100).optional().default(30),
+  setStatus: z.enum(TASK_STATUS_VALUES).nullable().optional(),
+  setPriority: z.enum(TASK_PRIORITY_VALUES).nullable().optional(),
+  setAssigneeId: z.string().uuid().nullable().optional(),
+  setAssigneeHint: z.string().trim().min(1).max(160).nullable().optional(),
+  clearDueAt: z.boolean().optional(),
+  setDueAt: z.string().datetime({ offset: true }).nullable().optional(),
+  addLabels: z.array(z.string().trim().min(1).max(40)).max(12).optional().default([]),
+  removeLabels: z.array(z.string().trim().min(1).max(40)).max(12).optional().default([])
+});
+
 const assistantActionStepSchema = z.object({
   operation: z.enum(assistantOperationValues),
   task: assistantTaskDraftSchema.nullable().optional(),
-  update: assistantTaskUpdateSchema.nullable().optional()
+  update: assistantTaskUpdateSchema.nullable().optional(),
+  query: assistantTaskQuerySchema.nullable().optional(),
+  bulk: assistantBulkUpdateSchema.nullable().optional()
 });
 
 const assistantCommandPlanSchema = z.object({
@@ -148,7 +187,9 @@ const assistantCommandPlanSchema = z.object({
   response: z.string().trim().min(1).max(1000).nullable().optional(),
   actions: z.array(assistantActionStepSchema).max(20).optional().default([]),
   task: assistantTaskDraftSchema.nullable().optional(),
-  update: assistantTaskUpdateSchema.nullable().optional()
+  update: assistantTaskUpdateSchema.nullable().optional(),
+  query: assistantTaskQuerySchema.nullable().optional(),
+  bulk: assistantBulkUpdateSchema.nullable().optional()
 });
 
 const reportQueryPlanSchema = z.object({
@@ -219,6 +260,8 @@ type AssistantCommandPlan = z.infer<typeof assistantCommandPlanSchema>;
 type AssistantActionStep = z.infer<typeof assistantActionStepSchema>;
 type AssistantTaskDraft = z.infer<typeof assistantTaskDraftSchema>;
 type AssistantTaskUpdate = z.infer<typeof assistantTaskUpdateSchema>;
+type AssistantTaskQuery = z.infer<typeof assistantTaskQuerySchema>;
+type AssistantBulkUpdate = z.infer<typeof assistantBulkUpdateSchema>;
 type AssistantResultStatus = 'completed' | 'blocked' | 'needs_clarification' | 'unsupported';
 
 interface AssistantProjectContext {
@@ -1042,6 +1085,8 @@ async function generateAssistantCommandPlan(params: {
     'عملیات‌های مجاز:',
     '- create_task: ساخت یک تسک',
     '- update_task: ویرایش یک تسک موجود',
+    '- query_tasks: گزارش‌گیری از تسک‌ها (فقط خواندن)',
+    '- bulk_update_tasks: ویرایش چند تسک براساس فیلتر',
     '- clarify: وقتی اطلاعات ضروری کم است',
     '- unsupported: وقتی درخواست خارج از این عملیات‌هاست یا خطرناک/گروهی/نامطمئن است',
     '',
@@ -1057,18 +1102,22 @@ async function generateAssistantCommandPlan(params: {
     TASK_PRIORITY_VALUES.join(', '),
     '9) مقدار status فقط یکی از این‌ها باشد:',
     TASK_STATUS_VALUES.join(', '),
-    '10) حذف، تغییرات گروهی، مدیریت کاربر/تیم/پروژه، یا کار نامطمئن را unsupported کن.',
-    '11) response را فارسی و کوتاه بنویس؛ اگر clarify یا unsupported است دقیق بگو کاربر چه چیزی را اصلاح کند.',
+    '10) درخواست‌هایی مثل "آخرین تسک فلانی" یا "آخرین تسک انجام‌شده هر شخص" را با query_tasks پوشش بده.',
+    '11) برای عملیات چندتایی، فقط از bulk_update_tasks استفاده کن.',
+    '12) حذف، مدیریت کاربر/تیم/پروژه، یا کار نامطمئن را unsupported کن.',
+    '13) response را فارسی و کوتاه بنویس؛ اگر clarify یا unsupported است دقیق بگو کاربر چه چیزی را اصلاح کند.',
     '',
     'فرمت خروجی:',
     JSON.stringify({
-      action: 'create_task | update_task | clarify | unsupported',
+      action: 'create_task | update_task | query_tasks | bulk_update_tasks | clarify | unsupported',
       response: 'پیام کوتاه فارسی',
       actions: [
         {
-          operation: 'create_task | update_task',
+          operation: 'create_task | update_task | query_tasks | bulk_update_tasks',
           task: {},
-          update: {}
+          update: {},
+          query: {},
+          bulk: {}
         }
       ],
       task: {
@@ -1099,6 +1148,35 @@ async function generateAssistantCommandPlan(params: {
         clearDueAt: false,
         labels: []
       },
+      query: {
+        mode: 'latest_task_for_user | latest_done_task_for_user | latest_done_task_for_each_user | search_tasks',
+        projectId: 'uuid یا null',
+        projectHint: 'string یا null',
+        assigneeId: 'uuid یا null',
+        assigneeHint: 'string یا null',
+        statuses: [],
+        priorities: [],
+        keywords: [],
+        limit: 5
+      },
+      bulk: {
+        projectId: 'uuid یا null',
+        projectHint: 'string یا null',
+        assigneeId: 'uuid یا null',
+        assigneeHint: 'string یا null',
+        statuses: [],
+        priorities: [],
+        keywords: [],
+        limit: 30,
+        setStatus: 'TODO یا null',
+        setPriority: 'MEDIUM یا null',
+        setAssigneeId: 'uuid یا null',
+        setAssigneeHint: 'string یا null',
+        clearDueAt: false,
+        setDueAt: 'ISO یا null',
+        addLabels: [],
+        removeLabels: []
+      }
     }, null, 2),
     '',
     'context:',
@@ -1214,7 +1292,7 @@ async function executeAssistantPlan(
   }
 
   if (plan.action === 'unsupported') {
-    return assistantResponse('unsupported', plan.response || 'این کار فعلا در محدوده عملیات قابل اجرای AI نیست. می‌توانم تسک بسازم یا تسک را ویرایش کنم.');
+    return assistantResponse('unsupported', plan.response || 'این کار فعلا در محدوده عملیات قابل اجرای AI نیست. می‌توانم تسک بسازم، تسک را ویرایش کنم، گزارش تسک بدهم یا روی چند تسک ویرایش گروهی انجام بدهم.');
   }
 
   const fallbackActions: AssistantActionStep[] =
@@ -1222,11 +1300,15 @@ async function executeAssistantPlan(
       ? [{ operation: 'create_task', task: plan.task || null }]
       : plan.action === 'update_task'
         ? [{ operation: 'update_task', update: plan.update || null }]
+        : plan.action === 'query_tasks'
+          ? [{ operation: 'query_tasks', query: plan.query || null }]
+          : plan.action === 'bulk_update_tasks'
+            ? [{ operation: 'bulk_update_tasks', bulk: plan.bulk || null }]
           : [];
   const actions = plan.actions.length > 0 ? plan.actions : fallbackActions;
 
   if (actions.length === 0) {
-    return assistantResponse('unsupported', 'این فرمان قابل اجرا نبود. پیام را دقیق‌تر و در محدوده ساخت یا ویرایش تسک بفرست.');
+    return assistantResponse('unsupported', 'این فرمان قابل اجرا نبود. پیام را دقیق‌تر و در محدوده ساخت، ویرایش، گزارش یا ویرایش گروهی تسک بفرست.');
   }
 
   const stepResults: Array<{ index: number; operation: string; status: AssistantResultStatus; message: string; data: Record<string, unknown> }> = [];
@@ -1379,6 +1461,278 @@ async function executeUpdateTaskPlan(
   });
 }
 
+async function executeQueryTasksPlan(
+  actor: Awaited<ReturnType<typeof getRequestActor>>,
+  query: AssistantTaskQuery | null,
+  context: AssistantContext
+) {
+  const safeQuery = assistantTaskQuerySchema.parse(query || {});
+  const mode = safeQuery.mode;
+  const limit = safeQuery.limit;
+  const resolvedProject = resolveAssistantProject(safeQuery.projectId || undefined, safeQuery.projectHint || undefined, context);
+  const resolvedAssignee = resolveOptionalAssistantUser(safeQuery.assigneeId, safeQuery.assigneeHint, context);
+  const baseWhere: Prisma.TaskWhereInput = {
+    workspaceId: actor.workspace.id,
+    ...(context.accessibleTeamIds
+      ? { project: { OR: [{ teamId: null }, { teamId: { in: context.accessibleTeamIds } }] } }
+      : {})
+  };
+  const andFilters: Prisma.TaskWhereInput[] = [];
+  if (resolvedProject) andFilters.push({ projectId: resolvedProject.id });
+  if (safeQuery.statuses.length > 0) andFilters.push({ status: { in: safeQuery.statuses } });
+  if (safeQuery.priorities.length > 0) andFilters.push({ priority: { in: safeQuery.priorities } });
+  if (safeQuery.keywords.length > 0) {
+    andFilters.push({
+      OR: safeQuery.keywords.flatMap((keyword) => ([
+        { key: { contains: keyword, mode: 'insensitive' as const } },
+        { title: { contains: keyword, mode: 'insensitive' as const } },
+        { description: { contains: keyword, mode: 'insensitive' as const } }
+      ]))
+    });
+  }
+
+  if (mode === 'latest_done_task_for_each_user') {
+    const userIds = context.users.map((user) => user.id);
+    if (userIds.length === 0) {
+      return assistantResponse('completed', 'کاربری برای گزارش پیدا نشد.', {
+        action: 'query_tasks',
+        query: { mode, items: [] }
+      });
+    }
+
+    const doneTasks = await prisma.task.findMany({
+      where: {
+        ...baseWhere,
+        status: 'DONE',
+        assigneeId: { in: userIds },
+        ...(andFilters.length > 0 ? { AND: andFilters } : {})
+      },
+      orderBy: [{ completedAt: 'desc' }, { updatedAt: 'desc' }],
+      select: {
+        id: true,
+        key: true,
+        title: true,
+        status: true,
+        completedAt: true,
+        updatedAt: true,
+        assigneeId: true,
+        assignee: { select: { id: true, name: true } },
+        project: { select: { id: true, name: true, keyPrefix: true } }
+      },
+      take: 1000
+    });
+
+    const latestByAssignee = new Map<string, (typeof doneTasks)[number]>();
+    for (const task of doneTasks) {
+      if (!task.assigneeId) continue;
+      if (!latestByAssignee.has(task.assigneeId)) {
+        latestByAssignee.set(task.assigneeId, task);
+      }
+    }
+
+    const items = [...latestByAssignee.values()]
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+      .slice(0, limit)
+      .map((task) => ({
+        key: task.key,
+        title: task.title,
+        assignee: task.assignee?.name || 'بدون مسئول',
+        project: task.project?.name || '-',
+        completedAt: task.completedAt?.toISOString() || null
+      }));
+
+    const lines = items.length
+      ? items.map((item) => `- ${item.assignee}: ${item.key} | ${item.title}`)
+      : ['- موردی پیدا نشد.'];
+
+    return assistantResponse('completed', `آخرین تسک‌های انجام‌شده هر شخص:\n${lines.join('\n')}`, {
+      action: 'query_tasks',
+      query: { mode, items }
+    });
+  }
+
+  if (mode !== 'search_tasks' && !resolvedAssignee) {
+    return assistantResponse('needs_clarification', 'شخص موردنظر را پیدا نکردم. نام، ایمیل یا شماره کاربر را دقیق‌تر بفرست.');
+  }
+
+  if (mode === 'search_tasks' && !resolvedProject && !resolvedAssignee && andFilters.length === 0) {
+    return assistantResponse('needs_clarification', 'برای گزارش تسک، حداقل یک فیلتر بده: شخص، پروژه، وضعیت، اولویت یا کلیدواژه.');
+  }
+
+  const where: Prisma.TaskWhereInput = {
+    ...baseWhere,
+    ...(resolvedAssignee ? { assigneeId: resolvedAssignee.id } : {}),
+    ...(mode === 'latest_done_task_for_user' ? { status: 'DONE' } : {}),
+    ...(andFilters.length > 0 ? { AND: andFilters } : {})
+  };
+
+  const items = await prisma.task.findMany({
+    where,
+    orderBy: mode === 'latest_done_task_for_user'
+      ? [{ completedAt: 'desc' }, { updatedAt: 'desc' }]
+      : [{ updatedAt: 'desc' }],
+    select: {
+      id: true,
+      key: true,
+      title: true,
+      status: true,
+      priority: true,
+      dueAt: true,
+      completedAt: true,
+      updatedAt: true,
+      assignee: { select: { id: true, name: true } },
+      project: { select: { id: true, name: true, keyPrefix: true } }
+    },
+    take: limit
+  });
+
+  const lines = items.length
+    ? items.map((task) => `- ${task.key} [${task.status}] ${task.title}`)
+    : ['- موردی پیدا نشد.'];
+
+  const label =
+    mode === 'latest_done_task_for_user'
+      ? `آخرین تسک‌های انجام‌شده ${resolvedAssignee?.name || ''}`.trim()
+      : mode === 'latest_task_for_user'
+        ? `آخرین تسک‌های ${resolvedAssignee?.name || ''}`.trim()
+        : 'نتیجه جستجوی تسک‌ها';
+  return assistantResponse('completed', `${label}:\n${lines.join('\n')}`, {
+    action: 'query_tasks',
+    query: {
+      mode,
+      assignee: resolvedAssignee ? { id: resolvedAssignee.id, name: resolvedAssignee.name } : null,
+      project: resolvedProject ? { id: resolvedProject.id, name: resolvedProject.name } : null,
+      items: items.map((task) => ({
+        key: task.key,
+        title: task.title,
+        status: task.status,
+        priority: task.priority,
+        dueAt: task.dueAt?.toISOString() || null,
+        completedAt: task.completedAt?.toISOString() || null,
+        assignee: task.assignee?.name || null,
+        project: task.project?.name || '-'
+      }))
+    }
+  });
+}
+
+async function executeBulkUpdateTasksPlan(
+  actor: Awaited<ReturnType<typeof getRequestActor>>,
+  bulk: AssistantBulkUpdate | null,
+  context: AssistantContext
+) {
+  const input = assistantBulkUpdateSchema.parse(bulk || {});
+  const resolvedProject = resolveAssistantProject(input.projectId || undefined, input.projectHint || undefined, context);
+  const resolvedAssignee = resolveOptionalAssistantUser(input.assigneeId, input.assigneeHint, context);
+  const targetAssignee = resolveOptionalAssistantUser(input.setAssigneeId, input.setAssigneeHint, context);
+  const where: Prisma.TaskWhereInput = {
+    workspaceId: actor.workspace.id,
+    ...(context.accessibleTeamIds
+      ? { project: { OR: [{ teamId: null }, { teamId: { in: context.accessibleTeamIds } }] } }
+      : {}),
+    ...(resolvedProject ? { projectId: resolvedProject.id } : {}),
+    ...(resolvedAssignee ? { assigneeId: resolvedAssignee.id } : {}),
+    ...(input.statuses.length ? { status: { in: input.statuses } } : {}),
+    ...(input.priorities.length ? { priority: { in: input.priorities } } : {})
+  };
+
+  if (input.keywords.length) {
+    where.AND = [
+      {
+        OR: input.keywords.flatMap((keyword) => ([
+          { key: { contains: keyword, mode: 'insensitive' as const } },
+          { title: { contains: keyword, mode: 'insensitive' as const } },
+          { description: { contains: keyword, mode: 'insensitive' as const } }
+        ]))
+      }
+    ];
+  }
+
+  const hasMutation =
+    Boolean(input.setStatus) ||
+    Boolean(input.setPriority) ||
+    Boolean(input.setAssigneeId || input.setAssigneeHint) ||
+    Boolean(input.clearDueAt) ||
+    input.setDueAt !== undefined ||
+    input.addLabels.length > 0 ||
+    input.removeLabels.length > 0;
+  if (!hasMutation) {
+    return assistantResponse('needs_clarification', 'برای ویرایش گروهی مشخص نکردی چه تغییری اعمال شود.');
+  }
+
+  const tasks = await prisma.task.findMany({
+    where,
+    orderBy: [{ updatedAt: 'desc' }],
+    select: { id: true, key: true, projectId: true },
+    take: input.limit ?? 30
+  });
+  if (tasks.length === 0) {
+    return assistantResponse('completed', 'تسکی مطابق فیلتر پیدا نشد.', {
+      action: 'bulk_update_tasks',
+      bulk: { updated: 0, failed: 0, items: [] }
+    });
+  }
+
+  const results: Array<{ key: string; ok: boolean; message: string }> = [];
+  for (const task of tasks) {
+    try {
+      const patch: Parameters<typeof updateTask>[2] = {};
+      if (input.setStatus) patch.status = input.setStatus;
+      if (input.setPriority) patch.priority = input.setPriority;
+      if (input.clearDueAt || input.setDueAt === null) patch.dueAt = null;
+      else if (input.setDueAt) patch.dueAt = input.setDueAt;
+
+      if (input.setAssigneeId || input.setAssigneeHint) {
+        if (!targetAssignee) throw new Error('Target assignee not found');
+        const project = context.projects.find((item) => item.id === task.projectId);
+        const assigneeProblem = project ? validateAssistantAssignee(project, targetAssignee, true) : null;
+        if (assigneeProblem) throw new Error(assigneeProblem);
+        patch.assigneeId = targetAssignee.id;
+      }
+
+      if (input.addLabels.length > 0 || input.removeLabels.length > 0) {
+        const labelSet = new Set(
+          (
+            await prisma.task.findUnique({
+              where: { id: task.id },
+              select: { labels: { include: { label: { select: { name: true } } } } }
+            })
+          )?.labels.map((item) => item.label.name) || []
+        );
+        for (const label of input.addLabels) labelSet.add(label);
+        for (const label of input.removeLabels) labelSet.delete(label);
+        patch.labels = [...labelSet];
+      }
+
+      if (Object.keys(patch).length === 0) {
+        results.push({ key: task.key, ok: false, message: 'No patch fields' });
+        continue;
+      }
+
+      await updateTask(actor, task.id, patch);
+      results.push({ key: task.key, ok: true, message: 'Updated' });
+    } catch (error) {
+      results.push({ key: task.key, ok: false, message: assistantErrorMessage(error) });
+    }
+  }
+
+  const updated = results.filter((item) => item.ok).length;
+  const failed = results.length - updated;
+  const status: AssistantResultStatus = failed > 0 ? 'blocked' : 'completed';
+  const message = failed > 0
+    ? `${updated} تسک به‌روزرسانی شد و ${failed} مورد خطا داشت.`
+    : `${updated} تسک با موفقیت به‌روزرسانی شد.`;
+
+  return assistantResponse(status, message, {
+    action: 'bulk_update_tasks',
+    bulk: {
+      updated,
+      failed,
+      items: results
+    }
+  });
+}
+
 async function executeAssistantActionStep(
   actor: Awaited<ReturnType<typeof getRequestActor>>,
   step: AssistantActionStep,
@@ -1390,13 +1744,20 @@ async function executeAssistantActionStep(
   if (step.operation === 'update_task') {
     return executeUpdateTaskPlan(actor, step.update || null, context);
   }
+  if (step.operation === 'query_tasks') {
+    return executeQueryTasksPlan(actor, step.query || null, context);
+  }
+  if (step.operation === 'bulk_update_tasks') {
+    return executeBulkUpdateTasksPlan(actor, step.bulk || null, context);
+  }
   return assistantResponse('unsupported', 'این نوع عملیات فعلا پشتیبانی نمی‌شود.');
 }
 
 function pickAssistantResultData(result: Record<string, unknown>): Record<string, unknown> {
   const picked: Record<string, unknown> = {};
   if ('task' in result) picked.task = result.task;
-  if ('comment' in result) picked.comment = result.comment;
+  if ('query' in result) picked.query = result.query;
+  if ('bulk' in result) picked.bulk = result.bulk;
   if ('action' in result) picked.action = result.action;
   return picked;
 }

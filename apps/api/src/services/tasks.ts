@@ -478,7 +478,11 @@ async function assertTaskRelations(
     throw new HttpError(400, 'Task cannot be its own parent');
   }
 
-  const [assignee, parent, cycle] = await Promise.all([
+  const [project, assignee, parent, cycle] = await Promise.all([
+    tx.project.findFirst({
+      where: { id: projectId, workspaceId },
+      select: { id: true, teamId: true }
+    }),
     input.assigneeId
       ? tx.workspaceMember.findUnique({
           where: { workspaceId_userId: { workspaceId, userId: input.assigneeId } },
@@ -500,7 +504,15 @@ async function assertTaskRelations(
       : Promise.resolve(null)
   ]);
 
+  if (!project) throw new HttpError(400, 'Project not found in this workspace');
   if (input.assigneeId && !assignee) throw new HttpError(400, 'Assignee must belong to this workspace');
+  if (input.assigneeId && project.teamId) {
+    const assigneeTeamMembership = await tx.teamMember.findUnique({
+      where: { teamId_userId: { teamId: project.teamId, userId: input.assigneeId } },
+      select: { id: true }
+    });
+    if (!assigneeTeamMembership) throw new HttpError(400, 'Assignee must belong to the project team');
+  }
   if (input.parentId && !parent) throw new HttpError(400, 'Parent task not found in this project');
   if (input.cycleId && !cycle) throw new HttpError(400, 'Cycle not found for this project');
 }

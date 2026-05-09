@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dialog';
 import { SidebarProvider } from '@/components/ui/sidebar';
 import { ShortcutKey } from '@/components/taskara/linear-ui';
+import { AiAssistantDock } from '@/components/taskara/ai-assistant-dock';
 import { fa } from '@/lib/fa-copy';
 import { areDesktopNotificationsEnabled, setDesktopNotificationsEnabled as persistDesktopNotificationsEnabled } from '@/lib/notification-service-worker';
 import { cn } from '@/lib/utils';
@@ -388,6 +389,7 @@ export default function MainLayout({ children, header, headersNumber = 2, showSi
                </div>
             </div>
          </div>
+         <AiAssistantDock />
          <Dialog open={commandOpen} onOpenChange={setCommandOpen}>
             <DialogContent
                aria-label={fa.command.title}

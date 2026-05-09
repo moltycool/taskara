@@ -6,6 +6,14 @@ import { config } from '../config';
 import { getRequestActor, requireWorkspaceAdmin } from '../services/actor';
 import { HttpError } from '../services/http';
 import { listAccessibleTeamIds } from '../services/team-access';
+import {
+  addTaskComment,
+  addTaskProgressStartedAt,
+  createTask,
+  findTaskByIdOrKey,
+  serializeTaskForResponse,
+  updateTask
+} from '../services/tasks';
 
 const AI_INTEGRATION_PROVIDER = 'CODEX' as const;
 const AI_INTEGRATION_EXTERNAL_ID = 'task-report-ai';
@@ -71,6 +79,57 @@ const reportAnalyzeInputSchema = z.object({
 
 const TASK_STATUS_VALUES = ['BACKLOG', 'TODO', 'IN_PROGRESS', 'IN_REVIEW', 'BLOCKED', 'DONE', 'CANCELED'] as const;
 const TASK_PRIORITY_VALUES = ['NO_PRIORITY', 'LOW', 'MEDIUM', 'HIGH', 'URGENT'] as const;
+const assistantActionValues = ['create_task', 'update_task', 'comment_task', 'clarify', 'unsupported'] as const;
+
+const aiAssistantMessageSchema = z.object({
+  message: z.string().trim().min(1).max(4000),
+  clientNow: z.string().datetime({ offset: true }).optional(),
+  timezone: z.string().trim().min(1).max(80).optional()
+});
+
+const assistantTaskDraftSchema = z.object({
+  projectId: z.string().uuid().nullable().optional(),
+  projectHint: z.string().trim().min(1).max(160).nullable().optional(),
+  title: z.string().trim().min(1).max(300).nullable().optional(),
+  description: z.string().trim().max(15000).nullable().optional(),
+  assigneeId: z.string().uuid().nullable().optional(),
+  assigneeHint: z.string().trim().min(1).max(160).nullable().optional(),
+  status: z.enum(TASK_STATUS_VALUES).nullable().optional(),
+  priority: z.enum(TASK_PRIORITY_VALUES).nullable().optional(),
+  dueAt: z.string().datetime({ offset: true }).nullable().optional(),
+  labels: z.array(z.string().trim().min(1).max(40)).max(12).optional().default([])
+});
+
+const assistantTaskUpdateSchema = z.object({
+  taskKeyOrId: z.string().trim().min(1).max(120).nullable().optional(),
+  taskHint: z.string().trim().min(1).max(160).nullable().optional(),
+  projectId: z.string().uuid().nullable().optional(),
+  projectHint: z.string().trim().min(1).max(160).nullable().optional(),
+  title: z.string().trim().min(1).max(300).nullable().optional(),
+  description: z.string().trim().max(15000).nullable().optional(),
+  assigneeId: z.string().uuid().nullable().optional(),
+  assigneeHint: z.string().trim().min(1).max(160).nullable().optional(),
+  unassign: z.boolean().optional(),
+  status: z.enum(TASK_STATUS_VALUES).nullable().optional(),
+  priority: z.enum(TASK_PRIORITY_VALUES).nullable().optional(),
+  dueAt: z.string().datetime({ offset: true }).nullable().optional(),
+  clearDueAt: z.boolean().optional(),
+  labels: z.array(z.string().trim().min(1).max(40)).max(12).optional()
+});
+
+const assistantTaskCommentSchema = z.object({
+  taskKeyOrId: z.string().trim().min(1).max(120).nullable().optional(),
+  taskHint: z.string().trim().min(1).max(160).nullable().optional(),
+  body: z.string().trim().min(1).max(15000).nullable().optional()
+});
+
+const assistantCommandPlanSchema = z.object({
+  action: z.enum(assistantActionValues),
+  response: z.string().trim().min(1).max(1000).nullable().optional(),
+  task: assistantTaskDraftSchema.nullable().optional(),
+  update: assistantTaskUpdateSchema.nullable().optional(),
+  comment: assistantTaskCommentSchema.nullable().optional()
+});
 
 const reportQueryPlanSchema = z.object({
   teamSlug: z.string().trim().min(1).max(80).nullable().optional(),
@@ -134,6 +193,45 @@ interface AiUsageSnapshot {
 interface AiAnalysisResult {
   content: string;
   usage: AiUsageSnapshot;
+}
+
+type AssistantCommandPlan = z.infer<typeof assistantCommandPlanSchema>;
+type AssistantTaskDraft = z.infer<typeof assistantTaskDraftSchema>;
+type AssistantTaskUpdate = z.infer<typeof assistantTaskUpdateSchema>;
+type AssistantTaskComment = z.infer<typeof assistantTaskCommentSchema>;
+type AssistantResultStatus = 'completed' | 'blocked' | 'needs_clarification' | 'unsupported';
+
+interface AssistantProjectContext {
+  index: number;
+  id: string;
+  name: string;
+  keyPrefix: string;
+  teamId: string | null;
+  teamName: string | null;
+  teamSlug: string | null;
+}
+
+interface AssistantUserContext {
+  index: number;
+  id: string;
+  name: string;
+  email: string;
+  teamIds: string[];
+}
+
+interface AssistantTaskContext {
+  index: number;
+  id: string;
+  key: string;
+  title: string;
+  projectId: string;
+}
+
+interface AssistantContext {
+  projects: AssistantProjectContext[];
+  users: AssistantUserContext[];
+  recentTasks: AssistantTaskContext[];
+  accessibleTeamIds: string[] | null;
 }
 
 interface ResolvedQueryFilters {
@@ -736,11 +834,12 @@ async function requestOpenAiCompatibleAnalysis(
   prompt: string,
   endpoint: string,
   extraHeaders?: Record<string, string>,
-  defaultContext?: string | null
+  defaultContext?: string | null,
+  systemInstruction = 'You are a project analytics assistant. Answer in Persian.'
 ): Promise<AiAnalysisResult> {
   const systemMessage = defaultContext?.trim()
-    ? `You are a project analytics assistant. Answer in Persian.\n\nDefault instructions:\n${defaultContext.trim()}`
-    : 'You are a project analytics assistant. Answer in Persian.';
+    ? `${systemInstruction}\n\nDefault instructions:\n${defaultContext.trim()}`
+    : systemInstruction;
 
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -813,11 +912,554 @@ async function generateAnalysis(
   );
 }
 
+async function generateAssistantCommandPlan(params: {
+  apiKey: string;
+  model: string;
+  defaultContext?: string | null;
+  message: string;
+  clientNow?: string;
+  timezone?: string;
+  actorName: string;
+  actorUserId: string;
+  workspaceName: string;
+  context: AssistantContext;
+}): Promise<{ plan: AssistantCommandPlan; usage: AiUsageSnapshot }> {
+  const contextPayload = {
+    actor: {
+      userId: params.actorUserId,
+      name: params.actorName
+    },
+    workspace: params.workspaceName,
+    now: params.clientNow || new Date().toISOString(),
+    timezone: params.timezone || 'UTC',
+    projects: params.context.projects.map((project) => ({
+      index: project.index,
+      id: project.id,
+      name: project.name,
+      keyPrefix: project.keyPrefix,
+      team: project.teamId
+        ? { id: project.teamId, name: project.teamName, slug: project.teamSlug }
+        : null
+    })),
+    users: params.context.users.map((user) => ({
+      index: user.index,
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      teamIds: user.teamIds
+    })),
+    recentTasks: params.context.recentTasks
+  };
+
+  const prompt = [
+    'تو planner اجرایی Taskara هستی. فقط JSON معتبر برگردان و هیچ متن اضافی ننویس.',
+    'وظیفه: پیام فارسی یا انگلیسی کاربر را به یک عملیات امن و محدود تبدیل کن.',
+    '',
+    'عملیات‌های مجاز:',
+    '- create_task: ساخت یک تسک',
+    '- update_task: ویرایش یک تسک موجود',
+    '- comment_task: افزودن کامنت به یک تسک',
+    '- clarify: وقتی اطلاعات ضروری کم است',
+    '- unsupported: وقتی درخواست خارج از این عملیات‌هاست یا خطرناک/گروهی/نامطمئن است',
+    '',
+    'قواعد مهم:',
+    '1) فقط از projectId و userIdهای موجود در context استفاده کن. ID جدید نساز.',
+    '2) اگر کاربر گفت پروژه ۲ یا کاربر ۳، index متناظر در context را انتخاب کن.',
+    '3) عبارت‌هایی مثل سینک به کاربر، assign، مسئول، بسپار به، یعنی assigneeId.',
+    '4) اگر عنوان تسک معلوم نیست action=clarify.',
+    '5) اگر پروژه برای ساخت تسک معلوم نیست action=clarify، مگر فقط یک پروژه در context باشد.',
+    '6) تاریخ‌های نسبی را با now و timezone داده‌شده به ISO 8601 همراه offset تبدیل کن.',
+    '7) مقدار priority فقط یکی از این‌ها باشد:',
+    TASK_PRIORITY_VALUES.join(', '),
+    '8) مقدار status فقط یکی از این‌ها باشد:',
+    TASK_STATUS_VALUES.join(', '),
+    '9) حذف، تغییرات گروهی، مدیریت کاربر/تیم/پروژه، یا کار نامطمئن را unsupported کن.',
+    '10) response را فارسی و کوتاه بنویس؛ اگر clarify یا unsupported است دقیق بگو کاربر چه چیزی را اصلاح کند.',
+    '',
+    'فرمت خروجی:',
+    JSON.stringify({
+      action: 'create_task | update_task | comment_task | clarify | unsupported',
+      response: 'پیام کوتاه فارسی',
+      task: {
+        projectId: 'uuid یا null',
+        projectHint: 'string یا null',
+        title: 'string یا null',
+        description: 'string یا null',
+        assigneeId: 'uuid یا null',
+        assigneeHint: 'string یا null',
+        status: 'TODO',
+        priority: 'MEDIUM',
+        dueAt: 'ISO یا null',
+        labels: []
+      },
+      update: {
+        taskKeyOrId: 'TASK-1 یا uuid یا null',
+        taskHint: 'string یا null',
+        projectId: 'uuid یا null',
+        projectHint: 'string یا null',
+        title: 'string یا null',
+        description: 'string یا null',
+        assigneeId: 'uuid یا null',
+        assigneeHint: 'string یا null',
+        unassign: false,
+        status: 'TODO یا null',
+        priority: 'MEDIUM یا null',
+        dueAt: 'ISO یا null',
+        clearDueAt: false,
+        labels: []
+      },
+      comment: {
+        taskKeyOrId: 'TASK-1 یا uuid یا null',
+        taskHint: 'string یا null',
+        body: 'string یا null'
+      }
+    }, null, 2),
+    '',
+    'context:',
+    JSON.stringify(contextPayload, null, 2),
+    '',
+    `پیام کاربر: ${params.message}`
+  ].join('\n');
+
+  const result = await requestOpenAiCompatibleAnalysis(
+    params.apiKey,
+    params.model,
+    prompt,
+    'https://openrouter.ai/api/v1/chat/completions',
+    { 'HTTP-Referer': 'https://taskara.local', 'X-Title': 'Taskara AI Assistant' },
+    params.defaultContext,
+    'You are a strict JSON planner for a Taskara task-management command executor. Return JSON only.'
+  );
+
+  const parsedJson = extractFirstJsonObject(result.content);
+  if (!parsedJson) {
+    throw new HttpError(502, 'AI model did not return a valid command plan');
+  }
+
+  return {
+    plan: assistantCommandPlanSchema.parse(parsedJson),
+    usage: result.usage
+  };
+}
+
+async function loadAssistantContext(actor: Awaited<ReturnType<typeof getRequestActor>>): Promise<AssistantContext> {
+  const accessibleTeamIds = await listAccessibleTeamIds(actor);
+  const projectWhere: Prisma.ProjectWhereInput = {
+    workspaceId: actor.workspace.id,
+    ...(accessibleTeamIds ? { OR: [{ teamId: null }, { teamId: { in: accessibleTeamIds } }] } : {})
+  };
+  const taskWhere: Prisma.TaskWhereInput = {
+    workspaceId: actor.workspace.id,
+    ...(accessibleTeamIds ? { project: { OR: [{ teamId: null }, { teamId: { in: accessibleTeamIds } }] } } : {})
+  };
+
+  const [projects, members, teamMembers, recentTasks] = await Promise.all([
+    prisma.project.findMany({
+      where: projectWhere,
+      orderBy: [{ updatedAt: 'desc' }],
+      take: 120,
+      include: { team: { select: { id: true, name: true, slug: true } } }
+    }),
+    prisma.workspaceMember.findMany({
+      where: { workspaceId: actor.workspace.id },
+      orderBy: [{ user: { name: 'asc' } }],
+      take: 300,
+      include: { user: { select: { id: true, name: true, email: true } } }
+    }),
+    prisma.teamMember.findMany({
+      where: { team: { workspaceId: actor.workspace.id } },
+      select: { teamId: true, userId: true }
+    }),
+    prisma.task.findMany({
+      where: taskWhere,
+      orderBy: [{ updatedAt: 'desc' }],
+      take: 80,
+      select: { id: true, key: true, title: true, projectId: true }
+    })
+  ]);
+
+  const teamIdsByUserId = new Map<string, string[]>();
+  for (const membership of teamMembers) {
+    const current = teamIdsByUserId.get(membership.userId) || [];
+    current.push(membership.teamId);
+    teamIdsByUserId.set(membership.userId, current);
+  }
+
+  return {
+    projects: projects.map((project, index) => ({
+      index: index + 1,
+      id: project.id,
+      name: project.name,
+      keyPrefix: project.keyPrefix,
+      teamId: project.teamId,
+      teamName: project.team?.name || null,
+      teamSlug: project.team?.slug || null
+    })),
+    users: members.map((member, index) => ({
+      index: index + 1,
+      id: member.user.id,
+      name: member.user.name,
+      email: member.user.email,
+      teamIds: teamIdsByUserId.get(member.user.id) || []
+    })),
+    recentTasks: recentTasks.map((task, index) => ({
+      index: index + 1,
+      id: task.id,
+      key: task.key,
+      title: task.title,
+      projectId: task.projectId
+    })),
+    accessibleTeamIds
+  };
+}
+
+async function executeAssistantPlan(
+  actor: Awaited<ReturnType<typeof getRequestActor>>,
+  plan: AssistantCommandPlan,
+  context: AssistantContext
+) {
+  if (plan.action === 'clarify') {
+    return assistantResponse('needs_clarification', plan.response || 'برای انجام این کار چند جزئیات کم است. پیام را با پروژه، عنوان و مسئول دقیق‌تر بفرست.');
+  }
+
+  if (plan.action === 'unsupported') {
+    return assistantResponse('unsupported', plan.response || 'این کار فعلا در محدوده عملیات قابل اجرای AI نیست. می‌توانم تسک بسازم، تسک را ویرایش کنم یا روی تسک کامنت بگذارم.');
+  }
+
+  try {
+    if (plan.action === 'create_task') {
+      return await executeCreateTaskPlan(actor, plan.task || null, context);
+    }
+    if (plan.action === 'update_task') {
+      return await executeUpdateTaskPlan(actor, plan.update || null, context);
+    }
+    if (plan.action === 'comment_task') {
+      return await executeCommentTaskPlan(actor, plan.comment || null, context);
+    }
+  } catch (error) {
+    return assistantResponse('blocked', assistantErrorMessage(error));
+  }
+
+  return assistantResponse('unsupported', 'این فرمان قابل اجرا نبود. پیام را دقیق‌تر و در محدوده ساخت، ویرایش یا کامنت تسک بفرست.');
+}
+
+async function executeCreateTaskPlan(
+  actor: Awaited<ReturnType<typeof getRequestActor>>,
+  draft: AssistantTaskDraft | null,
+  context: AssistantContext
+) {
+  if (!draft?.title) {
+    return assistantResponse('needs_clarification', 'عنوان تسک مشخص نیست. لطفا عنوان کار را هم در پیام بفرست.');
+  }
+
+  const project = resolveAssistantProject(draft.projectId || undefined, draft.projectHint || undefined, context);
+  if (!project) {
+    return assistantResponse('needs_clarification', 'پروژه را با اطمینان پیدا نکردم. نام، کد یا شماره پروژه را دقیق‌تر بنویس.');
+  }
+
+  const assignee = resolveOptionalAssistantUser(draft.assigneeId, draft.assigneeHint, context);
+  const assigneeProblem = validateAssistantAssignee(project, assignee, Boolean(draft.assigneeId || draft.assigneeHint));
+  if (assigneeProblem) return assistantResponse('blocked', assigneeProblem);
+
+  const task = await createTask(actor, {
+    projectId: project.id,
+    title: draft.title,
+    description: draft.description || undefined,
+    assigneeId: assignee?.id,
+    status: draft.status || 'TODO',
+    priority: draft.priority || 'NO_PRIORITY',
+    dueAt: draft.dueAt || undefined,
+    labels: draft.labels || [],
+    source: 'AGENT'
+  });
+  const [decoratedTask] = await addTaskProgressStartedAt(actor.workspace.id, [serializeTaskForResponse(task)]);
+
+  return assistantResponse('completed', `تسک ${task.key} ساخته شد.`, {
+    action: 'create_task',
+    task: decoratedTask
+  });
+}
+
+async function executeUpdateTaskPlan(
+  actor: Awaited<ReturnType<typeof getRequestActor>>,
+  update: AssistantTaskUpdate | null,
+  context: AssistantContext
+) {
+  const taskKeyOrId = resolveAssistantTaskKey(update?.taskKeyOrId || undefined, update?.taskHint || undefined, context);
+  if (!update || !taskKeyOrId) {
+    return assistantResponse('needs_clarification', 'تسکی که باید ویرایش شود مشخص نیست. کلید تسک یا شماره تسک اخیر را در پیام بفرست.');
+  }
+
+  const existing = await findTaskByIdOrKey(actor.workspace.id, taskKeyOrId, context.accessibleTeamIds);
+  if (!existing) {
+    return assistantResponse('blocked', 'این تسک را پیدا نکردم یا به آن دسترسی نداری.');
+  }
+
+  const targetProject = update.projectId || update.projectHint
+    ? resolveAssistantProject(update.projectId || undefined, update.projectHint || undefined, context)
+    : context.projects.find((project) => project.id === existing.projectId) || null;
+  if ((update.projectId || update.projectHint) && !targetProject) {
+    return assistantResponse('blocked', 'پروژه مقصد را پیدا نکردم یا به آن دسترسی نداری.');
+  }
+
+  const patch: Parameters<typeof updateTask>[2] = {};
+
+  if (hasOwn(update, 'title') && update.title) patch.title = update.title;
+  if (hasOwn(update, 'description')) patch.description = update.description ?? null;
+  if (targetProject && targetProject.id !== existing.projectId) patch.projectId = targetProject.id;
+  if (update.status) patch.status = update.status;
+  if (update.priority) patch.priority = update.priority;
+  if (hasOwn(update, 'labels') && update.labels) patch.labels = update.labels;
+  if (update.clearDueAt || (hasOwn(update, 'dueAt') && update.dueAt === null)) {
+    patch.dueAt = null;
+  } else if (update.dueAt) {
+    patch.dueAt = update.dueAt;
+  }
+
+  const assigneeRequested = Boolean(update.assigneeId || update.assigneeHint || update.unassign);
+  if (update.unassign || (hasOwn(update, 'assigneeId') && update.assigneeId === null)) {
+    patch.assigneeId = null;
+  } else if (update.assigneeId || update.assigneeHint) {
+    const assignee = resolveOptionalAssistantUser(update.assigneeId, update.assigneeHint, context);
+    const projectForAssignee = targetProject || context.projects.find((project) => project.id === existing.projectId) || null;
+    if (!projectForAssignee) return assistantResponse('blocked', 'پروژه تسک را برای کنترل دسترسی پیدا نکردم.');
+    const assigneeProblem = validateAssistantAssignee(projectForAssignee, assignee, assigneeRequested);
+    if (assigneeProblem) return assistantResponse('blocked', assigneeProblem);
+    patch.assigneeId = assignee?.id;
+  }
+
+  if (Object.keys(patch).length === 0) {
+    return assistantResponse('needs_clarification', 'مشخص نکردی چه چیزی در تسک باید تغییر کند.');
+  }
+
+  const task = await updateTask(actor, existing.id, patch);
+  const [decoratedTask] = await addTaskProgressStartedAt(actor.workspace.id, [serializeTaskForResponse(task)]);
+  return assistantResponse('completed', `تسک ${task.key} به‌روزرسانی شد.`, {
+    action: 'update_task',
+    task: decoratedTask
+  });
+}
+
+async function executeCommentTaskPlan(
+  actor: Awaited<ReturnType<typeof getRequestActor>>,
+  comment: AssistantTaskComment | null,
+  context: AssistantContext
+) {
+  const taskKeyOrId = resolveAssistantTaskKey(comment?.taskKeyOrId || undefined, comment?.taskHint || undefined, context);
+  if (!comment?.body) {
+    return assistantResponse('needs_clarification', 'متن کامنت مشخص نیست. متن کامنت را هم در پیام بفرست.');
+  }
+  if (!taskKeyOrId) {
+    return assistantResponse('needs_clarification', 'تسکی که باید کامنت بگیرد مشخص نیست. کلید تسک یا شماره تسک اخیر را در پیام بفرست.');
+  }
+
+  const existing = await findTaskByIdOrKey(actor.workspace.id, taskKeyOrId, context.accessibleTeamIds);
+  if (!existing) {
+    return assistantResponse('blocked', 'این تسک را پیدا نکردم یا به آن دسترسی نداری.');
+  }
+
+  const createdComment = await addTaskComment(actor, existing.id, comment.body, 'AGENT');
+  return assistantResponse('completed', `کامنت روی تسک ${existing.key} ثبت شد.`, {
+    action: 'comment_task',
+    task: { id: existing.id, key: existing.key },
+    comment: serializeTaskForResponse(createdComment)
+  });
+}
+
+function assistantResponse(status: AssistantResultStatus, message: string, extra: Record<string, unknown> = {}) {
+  return {
+    ok: status === 'completed',
+    status,
+    message,
+    ...extra
+  };
+}
+
+function resolveAssistantProject(
+  projectId: string | undefined,
+  projectHint: string | undefined,
+  context: AssistantContext
+): AssistantProjectContext | null {
+  if (projectId) return context.projects.find((project) => project.id === projectId) || null;
+  if (context.projects.length === 1 && !projectHint) return context.projects[0];
+  if (!projectHint) return null;
+
+  const normalized = normalizeSearchText(projectHint);
+  const numericIndex = numericHint(normalized);
+  if (numericIndex) {
+    const byIndex = context.projects.find((project) => project.index === numericIndex);
+    if (byIndex) return byIndex;
+  }
+
+  return context.projects.find((project) => {
+    const fields = [project.name, project.keyPrefix, project.teamName || '', project.teamSlug || ''].map(normalizeSearchText);
+    return fields.some((field) => field === normalized || field.includes(normalized) || normalized.includes(field));
+  }) || null;
+}
+
+function resolveOptionalAssistantUser(
+  userId: string | null | undefined,
+  userHint: string | null | undefined,
+  context: AssistantContext
+): AssistantUserContext | null {
+  if (userId) return context.users.find((user) => user.id === userId) || null;
+  if (!userHint) return null;
+
+  const normalized = normalizeSearchText(userHint);
+  const numericIndex = numericHint(normalized);
+  if (numericIndex) {
+    const byIndex = context.users.find((user) => user.index === numericIndex);
+    if (byIndex) return byIndex;
+  }
+
+  return context.users.find((user) => {
+    const fields = [user.name, user.email].map(normalizeSearchText);
+    return fields.some((field) => field === normalized || field.includes(normalized) || normalized.includes(field));
+  }) || null;
+}
+
+function resolveAssistantTaskKey(
+  taskKeyOrId: string | undefined,
+  taskHint: string | undefined,
+  context: AssistantContext
+): string | null {
+  if (taskKeyOrId) return taskKeyOrId;
+  if (!taskHint) return null;
+
+  const normalized = normalizeSearchText(taskHint);
+  const numericIndex = numericHint(normalized);
+  if (numericIndex) {
+    const byIndex = context.recentTasks.find((task) => task.index === numericIndex);
+    if (byIndex) return byIndex.key;
+  }
+
+  const match = context.recentTasks.find((task) => {
+    const fields = [task.key, task.title].map(normalizeSearchText);
+    return fields.some((field) => field === normalized || field.includes(normalized) || normalized.includes(field));
+  });
+  return match?.key || null;
+}
+
+function validateAssistantAssignee(
+  project: AssistantProjectContext,
+  assignee: AssistantUserContext | null,
+  wasRequested: boolean
+): string | null {
+  if (!wasRequested) return null;
+  if (!assignee) return 'کاربر مسئول را پیدا نکردم. نام، ایمیل یا شماره کاربر را دقیق‌تر بفرست.';
+  if (project.teamId && !assignee.teamIds.includes(project.teamId)) {
+    return `کاربر ${assignee.name} عضو تیم پروژه ${project.name} نیست. مسئول را اصلاح کن یا اول او را به تیم پروژه اضافه کن.`;
+  }
+  return null;
+}
+
+function numericHint(value: string): number | null {
+  const normalizedDigits = value.replace(/[۰-۹]/g, (digit) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)));
+  const match = normalizedDigits.match(/\d+/);
+  if (!match) return null;
+  const parsed = Number(match[0]);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function hasOwn<T extends object>(value: T, key: keyof T): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function assistantErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : 'در اجرای فرمان خطای نامشخص رخ داد.';
+  if (/Project not found/i.test(message)) return 'پروژه را پیدا نکردم یا به آن دسترسی نداری. پروژه را اصلاح کن.';
+  if (/Project access denied/i.test(message)) return 'به پروژه انتخاب‌شده دسترسی نداری. پروژه دیگری انتخاب کن یا دسترسی تیم را اصلاح کن.';
+  if (/Assignee must belong to this workspace/i.test(message)) return 'کاربر مسئول عضو این workspace نیست. مسئول را اصلاح کن.';
+  if (/Assignee must belong to the project team/i.test(message)) return 'کاربر مسئول عضو تیم پروژه نیست. مسئول را اصلاح کن یا اول او را به تیم پروژه اضافه کن.';
+  if (/Task not found/i.test(message)) return 'تسک را پیدا نکردم یا به آن دسترسی نداری. کلید تسک را اصلاح کن.';
+  if (error instanceof HttpError && error.statusCode >= 400 && error.statusCode < 500) return message;
+  return 'نتونستم این کار را انجام بدهم. پیام را کمی دقیق‌تر بفرست یا تنظیمات AI را بررسی کن.';
+}
+
 export async function registerAiReportRoutes(app: FastifyInstance): Promise<void> {
   app.get('/ai/settings', async (request) => {
     const actor = await getRequestActor(request);
     const accounts = await loadAiCredentialAccounts(actor.workspace.id);
     return serializeWorkspaceSettings(accounts);
+  });
+
+  app.post('/ai/assistant/message', async (request) => {
+    const actor = await getRequestActor(request);
+    const input = aiAssistantMessageSchema.parse(request.body);
+    const accounts = await loadAiCredentialAccounts(actor.workspace.id);
+    const selectedCredential = resolveActiveCredential(accounts);
+    if (!selectedCredential) {
+      throw new HttpError(400, 'AI API key is not configured. Set it in settings first.');
+    }
+
+    const storedApiKey = resolveStoredApiKey(selectedCredential);
+    if (!storedApiKey) {
+      throw new HttpError(400, 'AI API key is not configured. Set it in settings first.');
+    }
+
+    const aiConfig = normalizeAiConfig(selectedCredential.config);
+    const effectiveModel = actor.user.aiModel
+      ? normalizeOpenRouterModel(actor.user.aiModel)
+      : aiConfig.model;
+    const context = await loadAssistantContext(actor);
+    const planner = await generateAssistantCommandPlan({
+      apiKey: storedApiKey,
+      model: effectiveModel,
+      defaultContext: aiConfig.defaultContext,
+      message: input.message,
+      clientNow: input.clientNow,
+      timezone: input.timezone,
+      actorName: actor.user.name,
+      actorUserId: actor.user.id,
+      workspaceName: actor.workspace.name,
+      context
+    }).catch((error) => {
+      app.log.warn({ error }, 'Failed to plan AI assistant command');
+      return null;
+    });
+
+    if (!planner) {
+      return {
+        ...assistantResponse('blocked', 'نتونستم پیام را با اطمینان به یک فرمان قابل اجرا تبدیل کنم. لطفا پروژه، عنوان تسک، مسئول و سررسید را واضح‌تر بفرست.'),
+        ai: {
+          provider: aiConfig.provider,
+          model: effectiveModel,
+          credentialId: selectedCredential.id
+        }
+      };
+    }
+
+    await recordUsageStats(selectedCredential.id, planner.usage);
+
+    const result = await executeAssistantPlan(actor, planner.plan, context);
+
+    await prisma.agentRun.create({
+      data: {
+        workspaceId: actor.workspace.id,
+        kind: 'TRIAGE',
+        status: 'COMPLETED',
+        input: {
+          message: input.message,
+          clientNow: input.clientNow || null,
+          timezone: input.timezone || null
+        },
+        output: {
+          plan: planner.plan,
+          result
+        },
+        createdById: actor.user.id,
+        completedAt: new Date()
+      }
+    }).catch(() => undefined);
+
+    return {
+      ...result,
+      ai: {
+        provider: aiConfig.provider,
+        model: effectiveModel,
+        credentialId: selectedCredential.id
+      }
+    };
   });
 
   app.patch('/ai/settings', async (request) => {

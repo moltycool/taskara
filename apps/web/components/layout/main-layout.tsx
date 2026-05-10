@@ -19,7 +19,6 @@ import {
    DialogTitle,
 } from '@/components/ui/dialog';
 import { SidebarProvider } from '@/components/ui/sidebar';
-import { ShortcutKey } from '@/components/taskara/linear-ui';
 import { AiAssistantDock } from '@/components/taskara/ai-assistant-dock';
 import { LinearAvatar, ProjectGlyph, ShortcutKey, StatusIcon } from '@/components/taskara/linear-ui';
 import { fa } from '@/lib/fa-copy';
@@ -626,32 +625,6 @@ export default function MainLayout({ children, header, headersNumber = 2, showSi
             </div>
          </div>
          <AiAssistantDock />
-         <Dialog open={commandOpen} onOpenChange={setCommandOpen}>
-            <DialogContent
-               aria-label={fa.command.title}
-               className="max-w-[640px] gap-0 overflow-hidden border-white/10 bg-[#1d1d20] p-0 shadow-2xl"
-            >
-               <DialogHeader className="border-b border-white/8 px-4 py-3">
-                  <DialogTitle className="flex items-center gap-2 text-sm">
-                     <Search className="size-4 text-zinc-500" />
-                     {fa.command.title}
-                  </DialogTitle>
-                  <DialogDescription className="sr-only">
-                     {fa.command.description}
-                  </DialogDescription>
-               </DialogHeader>
-               <div className="max-h-[440px] overflow-y-auto p-2" data-testid="command-menu">
-                  {commandItems.map((item) => {
-                     const Icon = item.icon;
-                     return (
-                        <button
-                           key={item.label}
-                           className="group flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-start outline-none transition hover:bg-white/6 focus:bg-white/8"
-                           type="button"
-                           onClick={() => {
-                              setCommandOpen(false);
-                              item.run();
-                           }}
          <CommandDialog
             description={fa.command.description}
             contentClassName="max-w-[760px] sm:max-w-[760px]"

@@ -65,6 +65,15 @@ export async function registerNotificationRoutes(app: FastifyInstance): Promise<
               scheduledAt: true,
               heldAt: true
             }
+          },
+          knowledgePage: {
+            select: {
+              id: true,
+              title: true,
+              path: true,
+              status: true,
+              updatedAt: true
+            }
           }
         }
       }),
@@ -127,6 +136,15 @@ export async function registerNotificationRoutes(app: FastifyInstance): Promise<
               status: true,
               scheduledAt: true,
               heldAt: true
+            }
+          },
+          knowledgePage: {
+            select: {
+              id: true,
+              title: true,
+              path: true,
+              status: true,
+              updatedAt: true
             }
           }
         }

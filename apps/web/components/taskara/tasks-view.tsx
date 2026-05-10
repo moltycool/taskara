@@ -54,6 +54,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import {
    ContextMenu,
@@ -108,6 +109,7 @@ import type {
 import { taskPriorities, taskStatuses, taskWeights } from '@/lib/taskara-presenters';
 import { cn } from '@/lib/utils';
 import { getProjectColorsFromName, getUserColorsFromName } from '@/lib/name-colors';
+import { fromSelectValue, toSelectValue } from '@/lib/select-utils';
 
 const activeStatuses = ['TODO', 'IN_PROGRESS', 'IN_REVIEW', 'BLOCKED'];
 const currentTeamFallback = 'all';
@@ -2366,27 +2368,23 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
                         <ComposerSelectPill
                            ariaLabel={fa.issue.status}
                            icon={<StatusIcon status={form.status} className="size-3.5" />}
+                           options={taskStatuses.map((status) => ({
+                              value: status,
+                              label: linearStatusMeta[status]?.label || status,
+                           }))}
                            value={form.status}
                            onChange={(status) => setForm((current) => ({ ...current, status }))}
-                        >
-                           {taskStatuses.map((status) => (
-                              <option key={status} value={status}>
-                                 {linearStatusMeta[status]?.label || status}
-                              </option>
-                           ))}
-                        </ComposerSelectPill>
+                        />
                         <ComposerSelectPill
                            ariaLabel={fa.issue.priority}
                            icon={<PriorityIcon priority={form.priority} className="size-3.5" />}
+                           options={taskPriorities.map((priority) => ({
+                              value: priority,
+                              label: linearPriorityMeta[priority]?.label || priority,
+                           }))}
                            value={form.priority}
                            onChange={(priority) => setForm((current) => ({ ...current, priority }))}
-                        >
-                           {taskPriorities.map((priority) => (
-                              <option key={priority} value={priority}>
-                                 {linearPriorityMeta[priority]?.label || priority}
-                              </option>
-                           ))}
-                        </ComposerSelectPill>
+                        />
                         <ComposerSelectPill
                            ariaLabel={fa.issue.assignee}
                            icon={
@@ -2400,18 +2398,18 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
                                  <NoAssigneeIcon className="size-3.5 text-zinc-500" />
                               )
                            }
+                           options={[
+                              { value: '', label: fa.app.unset },
+                              ...usersForAssignee.map((user) => ({
+                                 value: user.id,
+                                 label: assigneeLabel(user, currentUserId),
+                              })),
+                           ]}
                            value={form.assigneeId}
                            onChange={(assigneeId) =>
                               setForm((current) => ({ ...current, assigneeId }))
                            }
-                        >
-                           <option value="">{fa.app.unset}</option>
-                           {usersForAssignee.map((user) => (
-                              <option key={user.id} value={user.id}>
-                                 {assigneeLabel(user, currentUserId)}
-                              </option>
-                           ))}
-                        </ComposerSelectPill>
+                        />
                         <ComposerSelectPill
                            ariaLabel={fa.issue.project}
                            icon={
@@ -2421,31 +2419,29 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
                                  iconClassName="size-3"
                               />
                            }
+                           options={scopedProjects.map((project) => ({
+                              value: project.id,
+                              label: project.name,
+                           })).concat({ value: '', label: fa.app.unset })}
                            value={form.projectId}
                            onChange={(projectId) =>
                               setForm((current) => ({ ...current, projectId }))
                            }
-                        >
-                           {scopedProjects.map((project) => (
-                              <option key={project.id} value={project.id}>
-                                 {project.name}
-                              </option>
-                           ))}
-                        </ComposerSelectPill>
+                        />
                         <ComposerSelectPill
                            ariaLabel={fa.issue.weight}
                            icon={<Box className="size-3.5 text-zinc-500" />}
+                           options={[
+                              { value: '', label: 'بدون وزن' },
+                              ...taskWeights.map((item) => ({
+                                 value: String(item),
+                                 label: item.toLocaleString('fa-IR'),
+                              })),
+                           ]}
                            placeholder={fa.issue.weight}
                            value={form.weight}
                            onChange={(weight) => setForm((current) => ({ ...current, weight }))}
-                        >
-                           <option value="">بدون وزن</option>
-                           {taskWeights.map((item) => (
-                              <option key={item} value={String(item)}>
-                                 {item.toLocaleString('fa-IR')}
-                              </option>
-                           ))}
-                        </ComposerSelectPill>
+                        />
                         <ComposerTextPill
                            ariaLabel={fa.issue.labels}
                            icon={<Tag className="size-3.5 text-zinc-500" />}
@@ -2744,23 +2740,23 @@ function ViewChip({
 
 function ComposerSelectPill({
    ariaLabel,
-   children,
    className,
    icon,
    onChange,
+   options,
    placeholder,
    value,
 }: {
    ariaLabel: string;
-   children: ReactNode;
    className?: string;
    icon: ReactNode;
    onChange: (value: string) => void;
+   options: Array<{ value: string; label: ReactNode }>;
    placeholder?: string;
    value: string;
 }) {
    return (
-      <label className={cn('relative inline-flex h-6 max-w-[168px] shrink-0', className)}>
+      <div className={cn('relative inline-flex h-6 max-w-[168px] shrink-0', className)}>
          <span className="sr-only">{ariaLabel}</span>
          <span className="pointer-events-none absolute start-2 top-1/2 z-10 flex -translate-y-1/2 items-center">
             {icon}
@@ -2770,18 +2766,25 @@ function ComposerSelectPill({
                {placeholder}
             </span>
          ) : null}
-         <select
-            aria-label={ariaLabel}
-            className={cn(
-               'h-6 min-w-0 cursor-pointer appearance-none rounded-full border border-white/8 bg-[#2a2a2d] py-0 ps-6 pe-2.5 text-[12px] font-normal text-zinc-300 shadow-[inset_0_1px_0_rgb(255_255_255/0.04)] outline-none transition hover:bg-[#303033] focus:ring-2 focus:ring-indigo-400/35',
-               placeholder && value === '' ? 'text-transparent' : null
-            )}
-            value={value}
-            onChange={(event) => onChange(event.target.value)}
-         >
-            {children}
-         </select>
-      </label>
+         <Select value={toSelectValue(value)} onValueChange={(nextValue) => onChange(fromSelectValue(nextValue))}>
+            <SelectTrigger
+               aria-label={ariaLabel}
+               className={cn(
+                  'h-6 min-w-0 rounded-full border-white/8 bg-[#2a2a2d] py-0 ps-6 pe-2.5 text-[12px] font-normal text-zinc-300 shadow-[inset_0_1px_0_rgb(255_255_255/0.04)] hover:bg-[#303033]',
+                  placeholder && value === '' ? '[&_[data-slot=select-value]]:text-transparent' : null
+               )}
+            >
+               <SelectValue placeholder={placeholder || ariaLabel} />
+            </SelectTrigger>
+            <SelectContent className="rounded-xl border-white/10 bg-[#202023] text-zinc-100">
+               {options.map((option) => (
+                  <SelectItem key={toSelectValue(option.value)} value={toSelectValue(option.value)}>
+                     {option.label}
+                  </SelectItem>
+               ))}
+            </SelectContent>
+         </Select>
+      </div>
    );
 }
 
@@ -3409,21 +3412,21 @@ function LinearSelectControl<T extends string>({
    value: T;
 }) {
    return (
-      <label className="relative inline-flex h-9 min-w-[116px]">
+      <div className="relative inline-flex h-9 min-w-[116px]">
          <span className="sr-only">{value}</span>
-         <select
-            className="h-9 w-full cursor-pointer appearance-none rounded-lg border border-white/10 bg-[#2b2b2e] py-0 pe-8 ps-2.5 text-sm text-zinc-100 outline-none transition hover:bg-[#333336] focus:ring-2 focus:ring-indigo-400/35"
-            value={value}
-            onChange={(event) => onChange(event.target.value as T)}
-         >
-            {options.map((option) => (
-               <option key={option.value} value={option.value}>
-                  {option.label}
-               </option>
-            ))}
-         </select>
-         <ChevronDown className="pointer-events-none absolute end-2.5 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
-      </label>
+         <Select value={value} onValueChange={(nextValue) => onChange(nextValue as T)}>
+            <SelectTrigger className="h-9 w-full rounded-lg border-white/10 bg-[#2b2b2e] py-0 pe-2.5 ps-2.5 text-sm text-zinc-100 hover:bg-[#333336]">
+               <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="rounded-lg border-white/10 bg-[#1b1b1d] text-zinc-100">
+               {options.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                     {option.label}
+                  </SelectItem>
+               ))}
+            </SelectContent>
+         </Select>
+      </div>
    );
 }
 

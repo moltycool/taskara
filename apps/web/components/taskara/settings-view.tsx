@@ -24,6 +24,7 @@ import { TeamsView } from '@/components/taskara/teams-view';
 import { LinearAvatar } from '@/components/taskara/linear-ui';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { taskaraRequest, uploadMedia } from '@/lib/taskara-client';
@@ -35,6 +36,7 @@ import type { PaginatedResponse, TaskaraMe, TaskaraProject, TaskaraUser } from '
 import { fa } from '@/lib/fa-copy';
 import { cn } from '@/lib/utils';
 import { getAuthSession, setAuthSession } from '@/store/auth-store';
+import { EMPTY_SELECT_VALUE, fromSelectValue, toSelectValue } from '@/lib/select-utils';
 
 const settingsSections = ['profile', 'appearance', 'workspace', 'members', 'teams', 'projects'] as const;
 type SettingsSection = (typeof settingsSections)[number];
@@ -490,22 +492,28 @@ function ProfileSettingsPage() {
                   label="پروژه پیش‌فرض"
                   description="این پروژه داخل فایل taskara.bash ذخیره می‌شود و تسک‌های ساخته‌شده از Raycast داخل همان پروژه ایجاد می‌شوند."
                >
-                  <select
-                     className={selectClassName}
+                  <Select
                      disabled={loading || projects.length === 0}
-                     value={selectedRaycastProjectId}
-                     onChange={(event) => setSelectedRaycastProjectId(event.target.value)}
+                     value={toSelectValue(selectedRaycastProjectId)}
+                     onValueChange={(value) => setSelectedRaycastProjectId(fromSelectValue(value))}
                   >
-                     {projects.length === 0 ? (
-                        <option value="">پروژه‌ای پیدا نشد</option>
-                     ) : (
-                        projects.map((project) => (
-                           <option key={project.id} value={project.id}>
-                              {project.name} ({project.keyPrefix})
-                           </option>
-                        ))
-                     )}
-                  </select>
+                     <SelectTrigger className={selectClassName}>
+                        <SelectValue placeholder="پروژه‌ای پیدا نشد" />
+                     </SelectTrigger>
+                     <SelectContent className="border-white/10 bg-[#202023] text-zinc-100">
+                        {projects.length === 0 ? (
+                           <SelectItem disabled value={EMPTY_SELECT_VALUE}>
+                              پروژه‌ای پیدا نشد
+                           </SelectItem>
+                        ) : (
+                           projects.map((project) => (
+                              <SelectItem key={project.id} value={project.id}>
+                                 {project.name} ({project.keyPrefix})
+                              </SelectItem>
+                           ))
+                        )}
+                     </SelectContent>
+                  </Select>
                </SettingsField>
                <div className="flex flex-wrap items-center gap-2 border-t border-white/7 px-4 py-3">
                   <Button
@@ -725,17 +733,18 @@ function WorkspaceAccessSettingsPage() {
                         </label>
                         <label className="grid gap-2 text-sm text-zinc-300">
                            <span>{fa.settings.role}</span>
-                           <select
-                              className={selectClassName}
-                              value={form.role}
-                              onChange={(event) => setForm((current) => ({ ...current, role: event.target.value }))}
-                           >
-                              {roleOptions.map((role) => (
-                                 <option key={role} value={role}>
-                                    {fa.role[role]}
-                                 </option>
-                              ))}
-                           </select>
+                           <Select value={form.role} onValueChange={(role) => setForm((current) => ({ ...current, role }))}>
+                              <SelectTrigger className={selectClassName}>
+                                 <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent className="border-white/10 bg-[#202023] text-zinc-100">
+                                 {roleOptions.map((role) => (
+                                    <SelectItem key={role} value={role}>
+                                       {fa.role[role]}
+                                    </SelectItem>
+                                 ))}
+                              </SelectContent>
+                           </Select>
                         </label>
                         <Button className="w-full border border-white/10 bg-zinc-100 text-zinc-950 hover:bg-white" disabled={isPending}>
                            {isPending ? fa.settings.creating : fa.settings.createUser}
@@ -791,18 +800,22 @@ function WorkspaceAccessSettingsPage() {
                                     <TableCell className="ltr text-zinc-400">{user.mattermostUsername ? `@${user.mattermostUsername}` : '-'}</TableCell>
                                     <TableCell className="text-zinc-400">{formatJalaliDateTime(user.joinedAt)}</TableCell>
                                     <TableCell>
-                                       <select
-                                          className={cn(selectClassName, 'min-w-28')}
-                                          value={user.role}
+                                       <Select
                                           disabled={!isWorkspaceAdmin || ownerLocked}
-                                          onChange={(event) => void handleRoleChange(user.id, event.target.value)}
+                                          value={user.role}
+                                          onValueChange={(role) => void handleRoleChange(user.id, role)}
                                        >
-                                          {userRoleOptions.map((role) => (
-                                             <option key={role} value={role}>
-                                                {fa.role[role]}
-                                             </option>
-                                          ))}
-                                       </select>
+                                          <SelectTrigger className={cn(selectClassName, 'min-w-28')}>
+                                             <SelectValue />
+                                          </SelectTrigger>
+                                          <SelectContent className="border-white/10 bg-[#202023] text-zinc-100">
+                                             {userRoleOptions.map((role) => (
+                                                <SelectItem key={role} value={role}>
+                                                   {fa.role[role]}
+                                                </SelectItem>
+                                             ))}
+                                          </SelectContent>
+                                       </Select>
                                     </TableCell>
                                     <TableCell>
                                        <Button
@@ -839,20 +852,24 @@ function AppearanceSettingsPage() {
 
          <SettingsPanel title="تایپوگرافی">
             <SettingsField label="فونت برنامه" description="فونت اصلی کل رابط کاربری.">
-               <select
-                  className={selectClassName}
+               <Select
                   value={settings.fontFamily}
-                  onChange={(event) =>
+                  onValueChange={(fontFamily) =>
                      setSettings({
-                        fontFamily: event.target.value as 'iranyekan' | 'peyda' | 'system' | 'mono',
+                        fontFamily: fontFamily as 'iranyekan' | 'peyda' | 'system' | 'mono',
                      })
                   }
                >
-                  <option value="iranyekan">IRANYekan</option>
-                  <option value="peyda">Peyda</option>
-                  <option value="system">سیستمی</option>
-                  <option value="mono">Monospace</option>
-               </select>
+                  <SelectTrigger className={selectClassName}>
+                     <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="border-white/10 bg-[#202023] text-zinc-100">
+                     <SelectItem value="iranyekan">IRANYekan</SelectItem>
+                     <SelectItem value="peyda">Peyda</SelectItem>
+                     <SelectItem value="system">سیستمی</SelectItem>
+                     <SelectItem value="mono">Monospace</SelectItem>
+                  </SelectContent>
+               </Select>
             </SettingsField>
 
             <SettingsField label="اندازه متن عادی" description="از ۸۵٪ تا ۱۳۰٪">

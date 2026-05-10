@@ -2,10 +2,11 @@
 
 import type { ChangeEvent, FormEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
    ArrowRight,
+   BookOpen,
    Box,
    Copy,
    ExternalLink,
@@ -23,6 +24,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { DescriptionEditor } from '@/components/taskara/description-editor';
 import { TaskDueDateControl } from '@/components/taskara/task-due-date-control';
@@ -45,12 +47,14 @@ import type {
    PaginatedResponse,
    TaskaraActivity,
    TaskaraAttachment,
+   TaskaraKnowledgeReference,
    TaskaraProject,
    TaskaraTask,
    TaskaraTaskComment,
    TaskaraUser,
 } from '@/lib/taskara-types';
 import { cn } from '@/lib/utils';
+import { EMPTY_SELECT_VALUE, fromSelectValue, fromSelectValueNullable, toSelectValue } from '@/lib/select-utils';
 
 type TaskUpdatePatch = {
    title?: string;
@@ -141,6 +145,7 @@ export function IssuePage() {
    const taskSync = useWorkspaceTaskSync();
    const [task, setTask] = useState<TaskaraTask | null>(null);
    const [activities, setActivities] = useState<TaskaraActivity[]>([]);
+   const [relatedDocs, setRelatedDocs] = useState<TaskaraKnowledgeReference[]>([]);
    const [users, setUsers] = useState<TaskaraUser[]>([]);
    const [projects, setProjects] = useState<TaskaraProject[]>([]);
    const [titleDraft, setTitleDraft] = useState('');
@@ -189,6 +194,18 @@ export function IssuePage() {
          setActivities(activityResult);
       } catch {
          setActivities([]);
+      }
+   }, []);
+
+   const loadRelatedDocs = useCallback(async (taskId: string) => {
+      try {
+         const params = new URLSearchParams({ type: 'TASK', targetId: taskId });
+         const references = await taskaraRequest<TaskaraKnowledgeReference[]>(
+            `/knowledge/references?${params.toString()}`
+         );
+         setRelatedDocs(references);
+      } catch {
+         setRelatedDocs([]);
       }
    }, []);
 
@@ -275,6 +292,14 @@ export function IssuePage() {
    useEffect(() => {
       void load();
    }, [load]);
+
+   useEffect(() => {
+      if (!task?.id) {
+         setRelatedDocs([]);
+         return;
+      }
+      void loadRelatedDocs(task.id);
+   }, [loadRelatedDocs, task?.id]);
 
    useTaskSyncPulse(() => {
       void load();
@@ -741,101 +766,133 @@ export function IssuePage() {
 
             <SidebarSection title={fa.issue.properties}>
                <div className="grid gap-1 p-2 text-sm">
-                  <SidebarSelectRow
-                     icon={<StatusIcon status={task.status} className="size-5" />}
-                     label={linearStatusMeta[task.status]?.label || task.status}
-                  >
-                     <select
-                        aria-label={fa.issue.status}
-                        className="absolute inset-0 cursor-pointer opacity-0"
-                        value={task.status}
-                        onChange={(event) => void updateTask({ status: event.target.value })}
+                  <Select value={task.status} onValueChange={(status) => void updateTask({ status })}>
+                     <SidebarSelectRow
+                        icon={<StatusIcon status={task.status} className="size-5" />}
+                        label={linearStatusMeta[task.status]?.label || task.status}
                      >
+                        <SelectTrigger aria-label={fa.issue.status} className="absolute inset-0 h-full w-full cursor-pointer opacity-0">
+                           <SelectValue />
+                        </SelectTrigger>
+                     </SidebarSelectRow>
+                     <SelectContent className="rounded-xl border-white/10 bg-[#202023] text-zinc-100">
                         {taskStatuses.map((status) => (
-                           <option key={status} value={status}>
+                           <SelectItem key={status} value={status}>
                               {linearStatusMeta[status]?.label || status}
-                           </option>
+                           </SelectItem>
                         ))}
-                     </select>
-                  </SidebarSelectRow>
-                  <SidebarSelectRow
-                     muted={task.priority === 'NO_PRIORITY'}
-                     icon={<PriorityIcon priority={task.priority} className="size-5" />}
-                     label={
-                        task.priority === 'NO_PRIORITY'
-                           ? fa.issue.priority
-                           : linearPriorityMeta[task.priority]?.label || task.priority
-                     }
-                  >
-                     <select
-                        aria-label={fa.issue.priority}
-                        className="absolute inset-0 cursor-pointer opacity-0"
-                        value={task.priority}
-                        onChange={(event) => void updateTask({ priority: event.target.value })}
-                     >
-                        {taskPriorities.map((priority) => (
-                           <option key={priority} value={priority}>
-                              {linearPriorityMeta[priority]?.label || priority}
-                           </option>
-                        ))}
-                     </select>
-                  </SidebarSelectRow>
-                  <SidebarSelectRow
-                     muted={!task.assignee}
-                     icon={
-                        task.assignee ? (
-                           <LinearAvatar name={task.assignee.name} src={task.assignee.avatarUrl} className="size-5" />
-                        ) : (
-                           <NoAssigneeIcon className="size-5 text-zinc-500" />
-                        )
-                     }
-                     label={task.assignee?.name || fa.issue.assignee}
-                  >
-                     <select
-                        aria-label={fa.issue.assignee}
-                        className="absolute inset-0 cursor-pointer opacity-0"
-                        value={task.assignee?.id || ''}
-                        onChange={(event) => void updateTask({ assigneeId: event.target.value || null })}
-                     >
-                        <option value="">{fa.app.unset}</option>
-                        {users.map((user) => (
-                           <option key={user.id} value={user.id}>
-                              {user.name}
-                           </option>
-                        ))}
-                     </select>
-                  </SidebarSelectRow>
-                  <SidebarSelectRow
-                     muted={task.weight === null || task.weight === undefined}
-                     icon={<Box className="size-5 text-zinc-500" />}
-                     label={
-                        task.weight === null || task.weight === undefined
-                           ? 'بدون وزن'
-                           : task.weight.toLocaleString('fa-IR')
-                     }
-                  >
-                     <select
-                        aria-label={fa.issue.weight}
-                        className="absolute inset-0 cursor-pointer opacity-0"
-                        value={task.weight === null || task.weight === undefined ? '' : String(task.weight)}
-                        onChange={(event) =>
-                           void updateTask({ weight: event.target.value === '' ? null : Number(event.target.value) })
+                     </SelectContent>
+                  </Select>
+                  <Select value={task.priority} onValueChange={(priority) => void updateTask({ priority })}>
+                     <SidebarSelectRow
+                        muted={task.priority === 'NO_PRIORITY'}
+                        icon={<PriorityIcon priority={task.priority} className="size-5" />}
+                        label={
+                           task.priority === 'NO_PRIORITY'
+                              ? fa.issue.priority
+                              : linearPriorityMeta[task.priority]?.label || task.priority
                         }
                      >
-                        <option value="">بدون وزن</option>
-                        {taskWeights.map((item) => (
-                           <option key={item} value={String(item)}>
-                              {item.toLocaleString('fa-IR')}
-                           </option>
+                        <SelectTrigger aria-label={fa.issue.priority} className="absolute inset-0 h-full w-full cursor-pointer opacity-0">
+                           <SelectValue />
+                        </SelectTrigger>
+                     </SidebarSelectRow>
+                     <SelectContent className="rounded-xl border-white/10 bg-[#202023] text-zinc-100">
+                        {taskPriorities.map((priority) => (
+                           <SelectItem key={priority} value={priority}>
+                              {linearPriorityMeta[priority]?.label || priority}
+                           </SelectItem>
                         ))}
-                     </select>
-                  </SidebarSelectRow>
+                     </SelectContent>
+                  </Select>
+                  <Select
+                     value={toSelectValue(task.assignee?.id)}
+                     onValueChange={(assigneeId) => void updateTask({ assigneeId: fromSelectValueNullable(assigneeId) })}
+                  >
+                     <SidebarSelectRow
+                        muted={!task.assignee}
+                        icon={
+                           task.assignee ? (
+                              <LinearAvatar name={task.assignee.name} src={task.assignee.avatarUrl} className="size-5" />
+                           ) : (
+                              <NoAssigneeIcon className="size-5 text-zinc-500" />
+                           )
+                        }
+                        label={task.assignee?.name || fa.issue.assignee}
+                     >
+                        <SelectTrigger aria-label={fa.issue.assignee} className="absolute inset-0 h-full w-full cursor-pointer opacity-0">
+                           <SelectValue />
+                        </SelectTrigger>
+                     </SidebarSelectRow>
+                     <SelectContent className="rounded-xl border-white/10 bg-[#202023] text-zinc-100">
+                        <SelectItem value={EMPTY_SELECT_VALUE}>{fa.app.unset}</SelectItem>
+                        {users.map((user) => (
+                           <SelectItem key={user.id} value={user.id}>
+                              {user.name}
+                           </SelectItem>
+                        ))}
+                     </SelectContent>
+                  </Select>
+                  <Select
+                     value={task.weight === null || task.weight === undefined ? EMPTY_SELECT_VALUE : String(task.weight)}
+                     onValueChange={(weight) =>
+                        void updateTask({ weight: weight === EMPTY_SELECT_VALUE ? null : Number(weight) })
+                     }
+                  >
+                     <SidebarSelectRow
+                        muted={task.weight === null || task.weight === undefined}
+                        icon={<Box className="size-5 text-zinc-500" />}
+                        label={
+                           task.weight === null || task.weight === undefined
+                              ? 'بدون وزن'
+                              : task.weight.toLocaleString('fa-IR')
+                        }
+                     >
+                        <SelectTrigger aria-label={fa.issue.weight} className="absolute inset-0 h-full w-full cursor-pointer opacity-0">
+                           <SelectValue />
+                        </SelectTrigger>
+                     </SidebarSelectRow>
+                     <SelectContent className="rounded-xl border-white/10 bg-[#202023] text-zinc-100">
+                        <SelectItem value={EMPTY_SELECT_VALUE}>بدون وزن</SelectItem>
+                        {taskWeights.map((item) => (
+                           <SelectItem key={item} value={String(item)}>
+                              {item.toLocaleString('fa-IR')}
+                           </SelectItem>
+                        ))}
+                     </SelectContent>
+                  </Select>
                   <TaskDueDateControl
                      className="h-auto min-h-9 w-full gap-3 rounded-lg px-2 py-2 text-sm"
                      dueAt={task.dueAt || null}
                      iconClassName="size-5 text-zinc-500"
                      onChange={(dueAt) => void updateTask({ dueAt })}
                   />
+               </div>
+            </SidebarSection>
+
+            <SidebarSection title={fa.issue.relatedDocs} className="mt-3">
+               <div className="grid gap-1 p-2 text-sm">
+                  {relatedDocs.length ? (
+                     relatedDocs.map((reference) => (
+                        <Link
+                           key={reference.id}
+                           className="flex min-w-0 items-center gap-3 rounded-lg px-2 py-2 transition hover:bg-white/5"
+                           to={`/${orgId || 'taskara'}/wiki/${reference.page.space?.key || reference.page.spaceId}/${reference.page.id}`}
+                        >
+                           <span className="flex size-5 shrink-0 items-center justify-center text-zinc-500">
+                              <BookOpen className="size-5" />
+                           </span>
+                           <span className="min-w-0 flex-1">
+                              <span className="block truncate text-base text-zinc-100">{reference.page.title}</span>
+                              <span className="block truncate text-xs text-zinc-500">
+                                 {reference.page.space?.name || fa.nav.wiki}
+                              </span>
+                           </span>
+                        </Link>
+                     ))
+                  ) : (
+                     <SidebarEmptyRow icon={<BookOpen className="size-5" />} label={fa.issue.noRelatedDocs} />
+                  )}
                </div>
             </SidebarSection>
 
@@ -864,36 +921,42 @@ export function IssuePage() {
 
             <SidebarSection title={fa.issue.project} className="mt-3">
                <div className="grid gap-1 p-2 text-sm">
-                  <SidebarSelectRow
-                     muted={!task.project}
-                     icon={
-                        task.project ? (
-                           <ProjectGlyph name={task.project.name} className="size-5 rounded-sm" iconClassName="size-3.5" />
-                        ) : (
-                           <Box className="size-5 text-zinc-500" />
-                        )
-                     }
-                     label={task.project?.name || fa.issue.project}
+                  <Select
+                     disabled={!projectOptions.length}
+                     value={toSelectValue(task.project?.id)}
+                     onValueChange={(value) => {
+                        const projectId = fromSelectValue(value);
+                        if (!projectId || projectId === task.project?.id) return;
+                        void updateTask({ projectId });
+                     }}
                   >
-                     <select
-                        aria-label={fa.issue.project}
-                        className="absolute inset-0 cursor-pointer opacity-0 disabled:cursor-not-allowed"
-                        disabled={!projectOptions.length}
-                        value={task.project?.id || ''}
-                        onChange={(event) => {
-                           const projectId = event.target.value;
-                           if (!projectId || projectId === task.project?.id) return;
-                           void updateTask({ projectId });
-                        }}
+                     <SidebarSelectRow
+                        muted={!task.project}
+                        icon={
+                           task.project ? (
+                              <ProjectGlyph name={task.project.name} className="size-5 rounded-sm" iconClassName="size-3.5" />
+                           ) : (
+                              <Box className="size-5 text-zinc-500" />
+                           )
+                        }
+                        label={task.project?.name || fa.issue.project}
                      >
-                        {!task.project ? <option value="">{fa.app.unset}</option> : null}
+                        <SelectTrigger
+                           aria-label={fa.issue.project}
+                           className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+                        >
+                           <SelectValue />
+                        </SelectTrigger>
+                     </SidebarSelectRow>
+                     <SelectContent className="rounded-xl border-white/10 bg-[#202023] text-zinc-100">
+                        {!task.project ? <SelectItem value={EMPTY_SELECT_VALUE}>{fa.app.unset}</SelectItem> : null}
                         {projectOptions.map((project) => (
-                           <option key={project.id} value={project.id}>
+                           <SelectItem key={project.id} value={project.id}>
                               {project.name}
-                           </option>
+                           </SelectItem>
                         ))}
-                     </select>
-                  </SidebarSelectRow>
+                     </SelectContent>
+                  </Select>
                </div>
             </SidebarSection>
          </aside>
@@ -1420,13 +1483,13 @@ function SidebarSelectRow({
    children: React.ReactNode;
 }) {
    return (
-      <label className="relative flex min-w-0 cursor-pointer items-center gap-3 rounded-lg px-2 py-2 transition hover:bg-white/5">
+      <div className="relative flex min-w-0 cursor-pointer items-center gap-3 rounded-lg px-2 py-2 transition hover:bg-white/5">
          <span className="flex size-5 shrink-0 items-center justify-center">{icon}</span>
          <span className={cn('min-w-0 flex-1 truncate text-base', muted ? 'text-zinc-500' : 'text-zinc-100')}>
             {label}
          </span>
          {children}
-      </label>
+      </div>
    );
 }
 

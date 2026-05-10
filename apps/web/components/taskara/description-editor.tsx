@@ -4,6 +4,7 @@ import type { CSSProperties, JSX, ReactNode, RefObject } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AutoFocusPlugin } from '@lexical/react/LexicalAutoFocusPlugin';
+import { AutoLinkPlugin, createLinkMatcherWithRegExp } from '@lexical/react/LexicalAutoLinkPlugin';
 import { CheckListPlugin } from '@lexical/react/LexicalCheckListPlugin';
 import { LexicalComposer, type InitialConfigType } from '@lexical/react/LexicalComposer';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
@@ -15,12 +16,13 @@ import { LinkPlugin } from '@lexical/react/LexicalLinkPlugin';
 import { ListPlugin } from '@lexical/react/LexicalListPlugin';
 import { MarkdownShortcutPlugin } from '@lexical/react/LexicalMarkdownShortcutPlugin';
 import { RichTextPlugin } from '@lexical/react/LexicalRichTextPlugin';
+import { TablePlugin } from '@lexical/react/LexicalTablePlugin';
 import {
    LexicalTypeaheadMenuPlugin,
    MenuOption,
    useBasicTypeaheadTriggerMatch,
 } from '@lexical/react/LexicalTypeaheadMenuPlugin';
-import { AutoLinkNode, LinkNode } from '@lexical/link';
+import { $isLinkNode, AutoLinkNode, LinkNode, TOGGLE_LINK_COMMAND } from '@lexical/link';
 import {
    $insertList,
    INSERT_CHECK_LIST_COMMAND,
@@ -29,7 +31,20 @@ import {
    ListItemNode,
    ListNode,
 } from '@lexical/list';
-import { CHECK_LIST, HEADING, ORDERED_LIST, QUOTE, UNORDERED_LIST } from '@lexical/markdown';
+import {
+   BOLD_STAR,
+   BOLD_UNDERSCORE,
+   CHECK_LIST,
+   HEADING,
+   INLINE_CODE,
+   ITALIC_STAR,
+   ITALIC_UNDERSCORE,
+   LINK,
+   ORDERED_LIST,
+   QUOTE,
+   STRIKETHROUGH,
+   UNORDERED_LIST,
+} from '@lexical/markdown';
 import {
    $createHeadingNode,
    $createQuoteNode,
@@ -39,6 +54,25 @@ import {
    QuoteNode,
 } from '@lexical/rich-text';
 import { $setBlocksType } from '@lexical/selection';
+import {
+   $computeTableMapSkipCellCheck,
+   INSERT_TABLE_COMMAND,
+   TableCellHeaderStates,
+   TableCellNode,
+   TableNode,
+   TableRowNode,
+   $createTableCellNode,
+   $createTableNode,
+   $createTableRowNode,
+   $deleteTableColumnAtSelection,
+   $deleteTableRowAtSelection,
+   $getTableCellNodeFromLexicalNode,
+   $getTableColumnIndexFromTableCellNode,
+   $getTableNodeFromLexicalNodeOrThrow,
+   $getTableRowIndexFromTableCellNode,
+   $insertTableColumnAtSelection,
+   $insertTableRowAtSelection,
+} from '@lexical/table';
 import {
    $applyNodeReplacement,
    $createParagraphNode,
@@ -50,7 +84,9 @@ import {
    $insertNodes,
    $isBlockElementNode,
    $isElementNode,
+   $isParagraphNode,
    $isRangeSelection,
+   $isTextNode,
    $normalizeSelection__EXPERIMENTAL,
    $setSelection,
    BLUR_COMMAND,
@@ -60,8 +96,10 @@ import {
    COMMAND_PRIORITY_LOW,
    CONTROLLED_TEXT_INSERTION_COMMAND,
    DecoratorNode,
+   FORMAT_ELEMENT_COMMAND,
    FOCUS_COMMAND,
    FORMAT_TEXT_COMMAND,
+   getDOMSelection,
    INDENT_CONTENT_COMMAND,
    INSERT_TAB_COMMAND,
    KEY_DOWN_COMMAND,
@@ -70,6 +108,8 @@ import {
    KEY_TAB_COMMAND,
    mergeRegister,
    OUTDENT_CONTENT_COMMAND,
+   PASTE_COMMAND,
+   SELECTION_CHANGE_COMMAND,
    TextNode,
    type DOMConversionMap,
    type DOMConversionOutput,
@@ -87,23 +127,51 @@ import {
    type SerializedLexicalNode,
    type SerializedTextNode,
    type Spread,
+   type TextFormatType,
 } from 'lexical';
 import {
+   AlignCenter,
+   AlignJustify,
+   AlignLeft,
+   AlignRight,
+   ArrowDown,
+   ArrowLeft,
+   ArrowRight,
+   ArrowUp,
    AtSign,
    Bold,
+   Columns3,
    Code2,
    GripVertical,
    Heading1,
    Heading2,
    Heading3,
+   ImagePlus,
    Italic,
+   Link2,
+   Link2Off,
    List,
    ListChecks,
    ListOrdered,
    Pilcrow,
    Quote,
+   Rows3,
    Strikethrough,
+   Subscript,
+   Superscript,
+   Table2,
+   Trash2,
+   Underline,
 } from 'lucide-react';
+import {
+   ContextMenu,
+   ContextMenuContent,
+   ContextMenuItem,
+   ContextMenuLabel,
+   ContextMenuSeparator,
+   ContextMenuShortcut,
+   ContextMenuTrigger,
+} from '@/components/ui/context-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { markCachedAvatarImageFailed, useCachedAvatarImage } from '@/lib/avatar-cache';
 import type { TaskaraUser } from '@/lib/taskara-types';
@@ -161,8 +229,30 @@ type SerializedInlineImageNode = Spread<
 >;
 
 const externalSyncTag = 'taskara-description-editor:external-sync';
-const descriptionMarkdownTransformers = [HEADING, QUOTE, UNORDERED_LIST, ORDERED_LIST, CHECK_LIST];
+const descriptionMarkdownTransformers = [
+   HEADING,
+   QUOTE,
+   UNORDERED_LIST,
+   ORDERED_LIST,
+   CHECK_LIST,
+   BOLD_STAR,
+   BOLD_UNDERSCORE,
+   ITALIC_STAR,
+   ITALIC_UNDERSCORE,
+   STRIKETHROUGH,
+   INLINE_CODE,
+   LINK,
+];
 const draggableBlockMenuClassName = 'taskara-description-block-drag-menu';
+const urlAutoLinkMatcher = createLinkMatcherWithRegExp(
+   /((https?:\/\/|www\.)[^\s<>"']+)/i,
+   (text) => (text.startsWith('http') ? text : `https://${text}`)
+);
+const emailAutoLinkMatcher = createLinkMatcherWithRegExp(
+   /[\w.!#$%&'*+/=?^`{|}~-]+@[\w-]+(?:\.[\w-]+)+/,
+   (text) => `mailto:${text}`
+);
+const autoLinkMatchers = [urlAutoLinkMatcher, emailAutoLinkMatcher];
 
 const editorTheme: EditorThemeClasses = {
    heading: {
@@ -199,6 +289,17 @@ const editorTheme: EditorThemeClasses = {
    root: 'text-right [--lexical-indent-base-value:40px]',
    rtl: 'text-right',
    tab: 'relative no-underline',
+   table:
+      'my-4 w-full border-collapse overflow-hidden rounded-lg border border-white/10 text-sm text-zinc-200 [direction:rtl]',
+   tableCell:
+      'min-w-24 border border-white/10 bg-white/[0.015] px-3 py-2 align-top outline-none',
+   tableCellHeader:
+      'min-w-24 border border-white/10 bg-white/[0.06] px-3 py-2 align-top font-semibold text-zinc-100 outline-none',
+   tableCellSelected: 'bg-indigo-500/15',
+   tableRow: 'border-white/10',
+   tableScrollableWrapper: 'my-4 overflow-x-auto',
+   tableSelected: 'ring-1 ring-indigo-400/50',
+   tableSelection: 'bg-indigo-500/20',
    text: {
       bold: '!font-semibold text-zinc-100',
       code: 'rounded bg-white/8 px-1 py-0.5 font-mono text-[0.92em] text-zinc-100',
@@ -560,6 +661,16 @@ function DescriptionToolbar({ className }: { className?: string }) {
             <ListChecks className="size-3.5" />
          </ToolbarButton>
          <ToolbarButton
+            label="جدول"
+            onClick={() =>
+               editor.focus(() =>
+                  editor.dispatchCommand(INSERT_TABLE_COMMAND, { columns: '3', includeHeaders: true, rows: '3' })
+               )
+            }
+         >
+            <Table2 className="size-3.5" />
+         </ToolbarButton>
+         <ToolbarButton
             label="فهرست شماره دار"
             onClick={() => editor.focus(() => editor.dispatchCommand(INSERT_ORDERED_LIST_COMMAND, undefined))}
          >
@@ -748,7 +859,7 @@ type FloatingMenuStyleOptions = {
 };
 
 class SlashCommandOption extends MenuOption {
-   command: () => void;
+   command: (editor: LexicalEditor) => void;
    description: string;
    iconNode: ReactNode;
    searchText: string;
@@ -763,7 +874,7 @@ class SlashCommandOption extends MenuOption {
       shortcut,
       title,
    }: {
-      command: () => void;
+      command: (editor: LexicalEditor) => void;
       description: string;
       icon: ReactNode;
       key: string;
@@ -781,106 +892,321 @@ class SlashCommandOption extends MenuOption {
    }
 }
 
-const slashCommandOptions = [
-   new SlashCommandOption({
-      command: () => $setBlocksType($getSelection(), () => $createParagraphNode()),
-      description: 'Plain text block',
-      icon: <Pilcrow className="size-4" />,
-      key: 'paragraph',
-      keywords: ['text', 'normal', 'body'],
-      title: 'Paragraph',
-   }),
-   new SlashCommandOption({
-      command: () => $setBlocksType($getSelection(), () => $createHeadingNode('h1')),
-      description: 'Large section heading',
-      icon: <Heading1 className="size-4" />,
-      key: 'heading-1',
-      keywords: ['h1', 'title'],
-      shortcut: '# Space',
-      title: 'Heading 1',
-   }),
-   new SlashCommandOption({
-      command: () => $setBlocksType($getSelection(), () => $createHeadingNode('h2')),
-      description: 'Medium section heading',
-      icon: <Heading2 className="size-4" />,
-      key: 'heading-2',
-      keywords: ['h2', 'subtitle'],
-      shortcut: '## Space',
-      title: 'Heading 2',
-   }),
-   new SlashCommandOption({
-      command: () => $setBlocksType($getSelection(), () => $createHeadingNode('h3')),
-      description: 'Small section heading',
-      icon: <Heading3 className="size-4" />,
-      key: 'heading-3',
-      keywords: ['h3', 'subheading'],
-      shortcut: '### Space',
-      title: 'Heading 3',
-   }),
-   new SlashCommandOption({
-      command: () => $insertList('bullet'),
-      description: 'Create a bulleted list',
-      icon: <List className="size-4" />,
-      key: 'bulleted-list',
-      keywords: ['unordered', 'ul', 'list'],
-      shortcut: '- Space',
-      title: 'Bulleted list',
-   }),
-   new SlashCommandOption({
-      command: () => $insertList('number'),
-      description: 'Create a numbered list',
-      icon: <ListOrdered className="size-4" />,
-      key: 'numbered-list',
-      keywords: ['ordered', 'ol', 'list'],
-      shortcut: '1. Space',
-      title: 'Numbered list',
-   }),
-   new SlashCommandOption({
-      command: () => $insertList('check'),
-      description: 'Create a checklist',
-      icon: <ListChecks className="size-4" />,
-      key: 'checklist',
-      keywords: ['todo', 'task', 'checkbox'],
-      shortcut: '[]',
-      title: 'Checklist',
-   }),
-   new SlashCommandOption({
-      command: () => $setBlocksType($getSelection(), () => $createQuoteNode()),
-      description: 'Create a block quote',
-      icon: <Quote className="size-4" />,
-      key: 'blockquote',
-      keywords: ['quote', 'blockquote', 'callout'],
-      shortcut: '> Space',
-      title: 'Blockquote',
-   }),
-   new SlashCommandOption({
-      command: () => {
-         const selection = $getSelection();
-         if ($isRangeSelection(selection)) selection.insertText('@');
-      },
-      description: 'Mention a workspace member',
-      icon: <AtSign className="size-4" />,
-      key: 'mention',
-      keywords: ['user', 'member', 'person'],
-      shortcut: '@',
-      title: 'Mention',
-   }),
-];
+function $formatCurrentSelection(format: TextFormatType) {
+   const selection = $getSelection();
+   if ($isRangeSelection(selection)) selection.formatText(format);
+}
 
-function SlashCommandsPlugin(): JSX.Element | null {
+function createSlashCommandOptions({
+   editor,
+   onUploadError,
+   query,
+   uploadImages,
+}: {
+   editor: LexicalEditor;
+   onUploadError?: (error: unknown) => void;
+   query: string;
+   uploadImages?: (files: File[]) => Promise<DescriptionInlineImage[]>;
+}) {
+   const dynamicOptions = createDynamicSlashCommandOptions(query);
+   const baseOptions = [
+      new SlashCommandOption({
+         command: (activeEditor) => activeEditor.update(() => $formatCurrentSelection('bold')),
+         description: 'پررنگ کردن متن انتخاب‌شده',
+         icon: <Bold className="size-4" />,
+         key: 'bold',
+         keywords: ['bold', 'format', 'strong', 'پررنگ'],
+         shortcut: '⌘B',
+         title: 'پررنگ',
+      }),
+      new SlashCommandOption({
+         command: (activeEditor) => activeEditor.update(() => $formatCurrentSelection('italic')),
+         description: 'کج کردن متن انتخاب‌شده',
+         icon: <Italic className="size-4" />,
+         key: 'italic',
+         keywords: ['italic', 'format', 'کج'],
+         shortcut: '⌘I',
+         title: 'کج',
+      }),
+      new SlashCommandOption({
+         command: (activeEditor) => activeEditor.update(() => $formatCurrentSelection('underline')),
+         description: 'زیرخط برای متن انتخاب‌شده',
+         icon: <Underline className="size-4" />,
+         key: 'underline',
+         keywords: ['underline', 'format', 'زیرخط'],
+         shortcut: '⌘U',
+         title: 'زیرخط',
+      }),
+      new SlashCommandOption({
+         command: (activeEditor) => activeEditor.update(() => $formatCurrentSelection('strikethrough')),
+         description: 'خط زدن متن انتخاب‌شده',
+         icon: <Strikethrough className="size-4" />,
+         key: 'strikethrough',
+         keywords: ['strike', 'strikethrough', 'format', 'خط'],
+         title: 'خط خورده',
+      }),
+      new SlashCommandOption({
+         command: (activeEditor) => activeEditor.update(() => $formatCurrentSelection('code')),
+         description: 'نمایش متن به صورت کد',
+         icon: <Code2 className="size-4" />,
+         key: 'code',
+         keywords: ['code', 'format', 'کد'],
+         title: 'کد',
+      }),
+      new SlashCommandOption({
+         command: (activeEditor) => activeEditor.update(() => $setBlocksType($getSelection(), () => $createParagraphNode())),
+         description: 'بلوک متن ساده',
+         icon: <Pilcrow className="size-4" />,
+         key: 'paragraph',
+         keywords: ['text', 'normal', 'body', 'paragraph', 'متن'],
+         title: 'متن ساده',
+      }),
+      new SlashCommandOption({
+         command: (activeEditor) => activeEditor.update(() => $setBlocksType($getSelection(), () => $createHeadingNode('h1'))),
+         description: 'تیتر بزرگ بخش',
+         icon: <Heading1 className="size-4" />,
+         key: 'heading-1',
+         keywords: ['h1', 'title', 'heading', 'تیتر'],
+         shortcut: '# Space',
+         title: 'تیتر ۱',
+      }),
+      new SlashCommandOption({
+         command: (activeEditor) => activeEditor.update(() => $setBlocksType($getSelection(), () => $createHeadingNode('h2'))),
+         description: 'تیتر متوسط بخش',
+         icon: <Heading2 className="size-4" />,
+         key: 'heading-2',
+         keywords: ['h2', 'subtitle', 'heading', 'تیتر'],
+         shortcut: '## Space',
+         title: 'تیتر ۲',
+      }),
+      new SlashCommandOption({
+         command: (activeEditor) => activeEditor.update(() => $setBlocksType($getSelection(), () => $createHeadingNode('h3'))),
+         description: 'تیتر کوچک بخش',
+         icon: <Heading3 className="size-4" />,
+         key: 'heading-3',
+         keywords: ['h3', 'subheading', 'heading', 'تیتر'],
+         shortcut: '### Space',
+         title: 'تیتر ۳',
+      }),
+      new SlashCommandOption({
+         command: (activeEditor) => activeEditor.update(() => $insertList('bullet')),
+         description: 'ساخت فهرست نقطه‌ای',
+         icon: <List className="size-4" />,
+         key: 'bulleted-list',
+         keywords: ['unordered', 'ul', 'list', 'bullet', 'فهرست'],
+         shortcut: '- Space',
+         title: 'فهرست نقطه‌ای',
+      }),
+      new SlashCommandOption({
+         command: (activeEditor) => activeEditor.update(() => $insertList('number')),
+         description: 'ساخت فهرست شماره‌دار',
+         icon: <ListOrdered className="size-4" />,
+         key: 'numbered-list',
+         keywords: ['ordered', 'ol', 'list', 'number', 'فهرست'],
+         shortcut: '1. Space',
+         title: 'فهرست شماره‌دار',
+      }),
+      new SlashCommandOption({
+         command: (activeEditor) => activeEditor.update(() => $insertList('check')),
+         description: 'ساخت چک‌لیست',
+         icon: <ListChecks className="size-4" />,
+         key: 'checklist',
+         keywords: ['todo', 'task', 'checkbox', 'checklist', 'چک'],
+         shortcut: '[]',
+         title: 'چک‌لیست',
+      }),
+      new SlashCommandOption({
+         command: (activeEditor) => activeEditor.update(() => $setBlocksType($getSelection(), () => $createQuoteNode())),
+         description: 'ساخت نقل‌قول',
+         icon: <Quote className="size-4" />,
+         key: 'blockquote',
+         keywords: ['quote', 'blockquote', 'callout', 'نقل'],
+         shortcut: '> Space',
+         title: 'نقل‌قول',
+      }),
+      new SlashCommandOption({
+         command: (activeEditor) =>
+            activeEditor.update(() => $insertNodes([createTableNodeWithText([['', '', ''], ['', '', ''], ['', '', '']], true), $createParagraphNode()])),
+         description: 'ساخت جدول ۳ در ۳',
+         icon: <Table2 className="size-4" />,
+         key: 'table',
+         keywords: ['grid', 'markdown', 'cells', 'table', 'جدول'],
+         shortcut: '| header |',
+         title: 'جدول',
+      }),
+      new SlashCommandOption({
+         command: (activeEditor) => insertLinkWithPrompt(activeEditor),
+         description: 'لینک دادن به متن انتخاب‌شده',
+         icon: <Link2 className="size-4" />,
+         key: 'link',
+         keywords: ['link', 'url', 'href', 'لینک'],
+         shortcut: '⌘K',
+         title: 'لینک',
+      }),
+      new SlashCommandOption({
+         command: (activeEditor) => insertImageUrlWithPrompt(activeEditor),
+         description: 'درج تصویر با آدرس',
+         icon: <ImagePlus className="size-4" />,
+         key: 'image-url',
+         keywords: ['image', 'photo', 'picture', 'url', 'تصویر'],
+         title: 'تصویر از لینک',
+      }),
+      ...(uploadImages
+         ? [
+              new SlashCommandOption({
+                 command: (activeEditor) => selectAndUploadInlineImages(activeEditor, uploadImages, onUploadError),
+                 description: 'بارگذاری تصویر در صفحه',
+                 icon: <ImagePlus className="size-4" />,
+                 key: 'image-upload',
+                 keywords: ['image', 'photo', 'upload', 'file', 'تصویر'],
+                 title: 'بارگذاری تصویر',
+              }),
+           ]
+         : []),
+      new SlashCommandOption({
+         command: (activeEditor) => activeEditor.update(() => {
+            const selection = $getSelection();
+            if ($isRangeSelection(selection)) selection.insertText('@');
+         }),
+         description: 'منشن یک عضو فضای کاری',
+         icon: <AtSign className="size-4" />,
+         key: 'mention',
+         keywords: ['user', 'member', 'person', 'mention', 'منشن'],
+         shortcut: '@',
+         title: 'منشن',
+      }),
+      ...(['right', 'center', 'left', 'justify'] as const).map((alignment) =>
+         new SlashCommandOption({
+            command: (activeEditor) => activeEditor.dispatchCommand(FORMAT_ELEMENT_COMMAND, alignment),
+            description: 'تنظیم چینش بلوک فعلی',
+            icon: alignmentIcon(alignment),
+            key: `align-${alignment}`,
+            keywords: ['align', 'justify', alignment, 'چینش'],
+            title: alignmentLabel(alignment),
+         })
+      ),
+   ];
+
+   if (!query) return [...dynamicOptions, ...baseOptions];
+   const normalizedQuery = query.toLocaleLowerCase('fa-IR');
+   return [
+      ...dynamicOptions,
+      ...baseOptions.filter((option) => option.searchText.includes(normalizedQuery)),
+   ];
+}
+
+function createDynamicSlashCommandOptions(query: string) {
+   const tableMatch = query.match(/^([1-9]\d?)(?:x([1-9]\d?)?)?$/i);
+   if (!tableMatch) return [];
+
+   const rows = tableMatch[1];
+   const columnOptions = tableMatch[2] ? [tableMatch[2]] : ['2', '3', '4', '5', '6'];
+   return columnOptions.map(
+      (columns) =>
+         new SlashCommandOption({
+            command: (activeEditor) =>
+               activeEditor.dispatchCommand(INSERT_TABLE_COMMAND, {
+                  columns,
+                  includeHeaders: true,
+                  rows,
+               }),
+            description: `ساخت جدول ${rows} در ${columns}`,
+            icon: <Table2 className="size-4" />,
+            key: `table-${rows}x${columns}`,
+            keywords: ['table', 'grid', 'جدول'],
+            title: `جدول ${rows}x${columns}`,
+      })
+   );
+}
+
+function alignmentIcon(alignment: 'center' | 'justify' | 'left' | 'right') {
+   if (alignment === 'center') return <AlignCenter className="size-4" />;
+   if (alignment === 'justify') return <AlignJustify className="size-4" />;
+   if (alignment === 'left') return <AlignLeft className="size-4" />;
+   return <AlignRight className="size-4" />;
+}
+
+function alignmentLabel(alignment: 'center' | 'justify' | 'left' | 'right') {
+   if (alignment === 'center') return 'وسط‌چین';
+   if (alignment === 'justify') return 'تمام‌چین';
+   if (alignment === 'left') return 'چپ‌چین';
+   return 'راست‌چین';
+}
+
+function normalizeLinkUrl(value: string) {
+   const trimmed = value.trim();
+   if (!trimmed) return '';
+   if (/^(https?:|mailto:|tel:)/i.test(trimmed)) return trimmed;
+   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) return `mailto:${trimmed}`;
+   return `https://${trimmed}`;
+}
+
+function insertLinkWithPrompt(editor: LexicalEditor) {
+   const url = typeof window === 'undefined' ? '' : window.prompt('آدرس لینک را وارد کنید', 'https://');
+   const normalizedUrl = normalizeLinkUrl(url || '');
+   if (!normalizedUrl) return;
+   editor.focus(() => editor.dispatchCommand(TOGGLE_LINK_COMMAND, normalizedUrl));
+}
+
+function removeLink(editor: LexicalEditor) {
+   editor.focus(() => editor.dispatchCommand(TOGGLE_LINK_COMMAND, null));
+}
+
+function insertImageUrlWithPrompt(editor: LexicalEditor) {
+   const src = typeof window === 'undefined' ? '' : window.prompt('آدرس تصویر را وارد کنید', 'https://');
+   const normalizedSrc = normalizeLinkUrl(src || '');
+   if (!normalizedSrc) return;
+
+   editor.update(() => {
+      $insertNodes([
+         $createInlineImageNode({ altText: '', src: normalizedSrc }),
+         $createTextNode(' '),
+      ]);
+   });
+}
+
+function selectAndUploadInlineImages(
+   editor: LexicalEditor,
+   uploadImages: (files: File[]) => Promise<DescriptionInlineImage[]>,
+   onUploadError?: (error: unknown) => void
+) {
+   const input = document.createElement('input');
+   input.type = 'file';
+   input.accept = 'image/*';
+   input.multiple = true;
+   input.onchange = () => {
+      const files = Array.from(input.files || []);
+      if (!files.length) return;
+
+      let selectionSnapshot: RangeSelection | null = null;
+      editor.getEditorState().read(() => {
+         const selection = $getSelection();
+         selectionSnapshot = $isRangeSelection(selection) ? selection.clone() : null;
+      });
+      void uploadAndInsertInlineImages(editor, files, uploadImages, onUploadError, selectionSnapshot);
+   };
+   input.click();
+}
+
+function SlashCommandsPlugin({
+   onUploadError,
+   uploadImages,
+}: {
+   onUploadError?: (error: unknown) => void;
+   uploadImages?: (files: File[]) => Promise<DescriptionInlineImage[]>;
+}): JSX.Element | null {
    const [editor] = useLexicalComposerContext();
    const [queryString, setQueryString] = useState<string | null>(null);
    const checkForSlashMatch = useBasicTypeaheadTriggerMatch('/', {
-      allowWhitespace: false,
+      allowWhitespace: true,
       maxLength: 40,
       minLength: 0,
    });
 
    const options = useMemo(() => {
       const query = (queryString || '').trim().toLocaleLowerCase('en-US');
-      if (!query) return slashCommandOptions;
-      return slashCommandOptions.filter((option) => option.searchText.includes(query));
-   }, [queryString]);
+      return createSlashCommandOptions({ editor, onUploadError, query, uploadImages });
+   }, [editor, onUploadError, queryString, uploadImages]);
 
    const onSelectOption = useCallback(
       (selectedOption: SlashCommandOption, textNodeContainingQuery: TextNode | null, closeMenu: () => void) => {
@@ -890,9 +1216,9 @@ function SlashCommandsPlugin(): JSX.Element | null {
                textNodeContainingQuery.remove();
                parent?.selectEnd();
             }
-            selectedOption.command();
             closeMenu();
          });
+         selectedOption.command(editor);
       },
       [editor]
    );
@@ -900,7 +1226,7 @@ function SlashCommandsPlugin(): JSX.Element | null {
    return (
       <LexicalTypeaheadMenuPlugin<SlashCommandOption>
          ignoreEntityBoundary
-         options={options.slice(0, 8)}
+         options={options}
          triggerFn={checkForSlashMatch}
          onQueryChange={setQueryString}
          onSelectOption={onSelectOption}
@@ -917,6 +1243,110 @@ function SlashCommandsPlugin(): JSX.Element | null {
          }}
       />
    );
+}
+
+function MarkdownTablePastePlugin(): null {
+   const [editor] = useLexicalComposerContext();
+
+   useEffect(() => {
+      return editor.registerCommand(
+         PASTE_COMMAND,
+         (event) => {
+            if (!('clipboardData' in event) || !event.clipboardData) return false;
+            const text = event.clipboardData.getData('text/plain');
+            const table = parseMarkdownTable(text);
+            if (!table) return false;
+
+            event.preventDefault();
+            editor.update(() => {
+               $insertNodes([createTableNodeWithText(table.rows, table.hasHeader), $createParagraphNode()]);
+            });
+            return true;
+         },
+         COMMAND_PRIORITY_HIGH
+      );
+   }, [editor]);
+
+   return null;
+}
+
+function parseMarkdownTable(input: string): { hasHeader: boolean; rows: string[][] } | null {
+   const lines = input
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+   if (lines.length < 2 || !lines.every((line) => line.includes('|'))) return null;
+
+   const separatorIndex = lines.findIndex((line, index) => index > 0 && isMarkdownTableSeparator(line));
+   if (separatorIndex !== 1) return null;
+
+   const rows = [lines[0], ...lines.slice(separatorIndex + 1)]
+      .map(splitMarkdownTableRow)
+      .filter((row) => row.length > 0);
+   if (rows.length < 2) return null;
+
+   const columnCount = Math.max(...rows.map((row) => row.length));
+   if (columnCount < 2) return null;
+
+   return {
+      hasHeader: true,
+      rows: rows.map((row) => {
+         const normalized = row.slice(0, columnCount);
+         while (normalized.length < columnCount) normalized.push('');
+         return normalized;
+      }),
+   };
+}
+
+function isMarkdownTableSeparator(line: string): boolean {
+   const cells = splitMarkdownTableRow(line);
+   return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, '')));
+}
+
+function splitMarkdownTableRow(line: string): string[] {
+   const trimmed = line.replace(/^\|/, '').replace(/\|$/, '');
+   const cells: string[] = [];
+   let current = '';
+   let escaped = false;
+
+   for (const char of trimmed) {
+      if (escaped) {
+         current += char;
+         escaped = false;
+         continue;
+      }
+      if (char === '\\') {
+         escaped = true;
+         continue;
+      }
+      if (char === '|') {
+         cells.push(current.trim());
+         current = '';
+         continue;
+      }
+      current += char;
+   }
+
+   cells.push(current.trim());
+   return cells;
+}
+
+function createTableNodeWithText(rows: string[][], hasHeader: boolean): TableNode {
+   const tableNode = $createTableNode();
+   rows.forEach((row, rowIndex) => {
+      const tableRowNode = $createTableRowNode();
+      row.forEach((cell) => {
+         const headerState = hasHeader && rowIndex === 0 ? TableCellHeaderStates.ROW : TableCellHeaderStates.NO_STATUS;
+         const cellNode = $createTableCellNode(headerState);
+         const paragraphNode = $createParagraphNode();
+         if (cell) paragraphNode.append($createTextNode(cell));
+         cellNode.append(paragraphNode);
+         tableRowNode.append(cellNode);
+      });
+      tableNode.append(tableRowNode);
+   });
+   return tableNode;
 }
 
 function SlashCommandMenu({
@@ -938,8 +1368,8 @@ function SlashCommandMenu({
 
    return createPortal(
       <div
-         className="z-50 overflow-hidden rounded-xl border border-white/10 bg-[#202023] p-1.5 text-left shadow-2xl"
-         dir="ltr"
+         className="z-50 overflow-hidden rounded-xl border border-white/10 bg-[#202023] p-1.5 text-right shadow-2xl"
+         dir="rtl"
          style={getFloatingMenuStyle(anchor, {
             estimatedHeight: 420,
             maxHeight: 'min(28rem, calc(100vh - 24px))',
@@ -953,7 +1383,7 @@ function SlashCommandMenu({
                ref={option.setRefElement}
                aria-selected={selectedIndex === index}
                className={cn(
-                  'flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-sm text-zinc-300 outline-none transition',
+                  'flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-right text-sm text-zinc-300 outline-none transition',
                   selectedIndex === index ? 'bg-white/10 text-zinc-100' : 'hover:bg-white/8'
                )}
                role="option"
@@ -1033,6 +1463,499 @@ function MentionAvatar({ user }: { user: MentionUser }) {
             user.name.trim().slice(0, 1)
          )}
       </span>
+   );
+}
+
+function $getCurrentTableCell() {
+   const selection = $getSelection();
+   if (!$isRangeSelection(selection)) return null;
+   return $getTableCellNodeFromLexicalNode(selection.anchor.getNode());
+}
+
+function $toggleCurrentTableRowHeader() {
+   const tableCellNode = $getCurrentTableCell();
+   if (!tableCellNode) return;
+
+   const tableNode = $getTableNodeFromLexicalNodeOrThrow(tableCellNode);
+   const tableRowIndex = $getTableRowIndexFromTableCellNode(tableCellNode);
+   const [gridMap] = $computeTableMapSkipCellCheck(tableNode, null, null);
+   const nextStyle = tableCellNode.getHeaderStyles() ^ TableCellHeaderStates.ROW;
+   const rowCells = new Set<TableCellNode>();
+
+   for (const mapCell of gridMap[tableRowIndex] || []) {
+      if (mapCell?.cell && !rowCells.has(mapCell.cell)) {
+         rowCells.add(mapCell.cell);
+         mapCell.cell.setHeaderStyles(nextStyle, TableCellHeaderStates.ROW);
+      }
+   }
+}
+
+function $toggleCurrentTableColumnHeader() {
+   const tableCellNode = $getCurrentTableCell();
+   if (!tableCellNode) return;
+
+   const tableNode = $getTableNodeFromLexicalNodeOrThrow(tableCellNode);
+   const tableColumnIndex = $getTableColumnIndexFromTableCellNode(tableCellNode);
+   const [gridMap] = $computeTableMapSkipCellCheck(tableNode, null, null);
+   const nextStyle = tableCellNode.getHeaderStyles() ^ TableCellHeaderStates.COLUMN;
+   const columnCells = new Set<TableCellNode>();
+
+   for (const row of gridMap) {
+      const mapCell = row[tableColumnIndex];
+      if (mapCell?.cell && !columnCells.has(mapCell.cell)) {
+         columnCells.add(mapCell.cell);
+         mapCell.cell.setHeaderStyles(nextStyle, TableCellHeaderStates.COLUMN);
+      }
+   }
+}
+
+function $deleteCurrentTable() {
+   const tableCellNode = $getCurrentTableCell();
+   if (!tableCellNode) return;
+   $getTableNodeFromLexicalNodeOrThrow(tableCellNode).remove();
+}
+
+function DescriptionContextMenu({
+   onUploadError,
+   uploadImages,
+}: {
+   onUploadError?: (error: unknown) => void;
+   uploadImages?: (files: File[]) => Promise<DescriptionInlineImage[]>;
+}): JSX.Element {
+   const [editor] = useLexicalComposerContext();
+   const [isInTable, setIsInTable] = useState(false);
+
+   const updateTableState = useCallback(() => {
+      editor.getEditorState().read(() => {
+         setIsInTable(Boolean($getCurrentTableCell()));
+      });
+   }, [editor]);
+
+   useEffect(() => {
+      updateTableState();
+      return mergeRegister(
+         editor.registerUpdateListener(() => updateTableState()),
+         editor.registerCommand(
+            SELECTION_CHANGE_COMMAND,
+            () => {
+               updateTableState();
+               return false;
+            },
+            COMMAND_PRIORITY_LOW
+         )
+      );
+   }, [editor, updateTableState]);
+
+   const formatText = useCallback(
+      (format: TextFormatType) => {
+         editor.focus(() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, format));
+      },
+      [editor]
+   );
+
+   const setParagraph = useCallback(() => {
+      editor.update(() => {
+         $setBlocksType($getSelection(), () => $createParagraphNode());
+      });
+   }, [editor]);
+
+   const setHeading = useCallback(
+      (level: 'h1' | 'h2' | 'h3') => {
+         editor.update(() => {
+            $setBlocksType($getSelection(), () => $createHeadingNode(level));
+         });
+      },
+      [editor]
+   );
+
+   const setQuote = useCallback(() => {
+      editor.update(() => {
+         $setBlocksType($getSelection(), () => $createQuoteNode());
+      });
+   }, [editor]);
+
+   const insertTable = useCallback(() => {
+      editor.focus(() =>
+         editor.dispatchCommand(INSERT_TABLE_COMMAND, { columns: '3', includeHeaders: true, rows: '3' })
+      );
+   }, [editor]);
+
+   const runTableCommand = useCallback(
+      (command: () => void) => {
+         editor.update(command);
+      },
+      [editor]
+   );
+
+   return (
+      <ContextMenuContent
+         className="w-64 border-white/10 bg-[#202023] p-1.5 text-zinc-300 shadow-2xl"
+         dir="rtl"
+      >
+         <ContextMenuLabel className="px-2 py-1 text-xs font-normal text-zinc-500">متن</ContextMenuLabel>
+         <EditorContextMenuItem icon={<Bold className="size-4" />} shortcut="⌘B" onSelect={() => formatText('bold')}>
+            پررنگ
+         </EditorContextMenuItem>
+         <EditorContextMenuItem icon={<Italic className="size-4" />} shortcut="⌘I" onSelect={() => formatText('italic')}>
+            کج
+         </EditorContextMenuItem>
+         <EditorContextMenuItem icon={<Underline className="size-4" />} shortcut="⌘U" onSelect={() => formatText('underline')}>
+            زیرخط
+         </EditorContextMenuItem>
+         <EditorContextMenuItem icon={<Strikethrough className="size-4" />} onSelect={() => formatText('strikethrough')}>
+            خط خورده
+         </EditorContextMenuItem>
+         <EditorContextMenuItem icon={<Code2 className="size-4" />} onSelect={() => formatText('code')}>
+            کد
+         </EditorContextMenuItem>
+         <EditorContextMenuItem icon={<Subscript className="size-4" />} onSelect={() => formatText('subscript')}>
+            زیرنویس
+         </EditorContextMenuItem>
+         <EditorContextMenuItem icon={<Superscript className="size-4" />} onSelect={() => formatText('superscript')}>
+            بالانویس
+         </EditorContextMenuItem>
+         <EditorContextMenuItem icon={<Link2 className="size-4" />} shortcut="⌘K" onSelect={() => insertLinkWithPrompt(editor)}>
+            لینک
+         </EditorContextMenuItem>
+         <EditorContextMenuItem icon={<Link2Off className="size-4" />} onSelect={() => removeLink(editor)}>
+            حذف لینک
+         </EditorContextMenuItem>
+         <EditorContextMenuItem
+            icon={<AtSign className="size-4" />}
+            shortcut="@"
+            onSelect={() => editor.focus(() => editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, '@'))}
+         >
+            منشن
+         </EditorContextMenuItem>
+
+         <ContextMenuSeparator className="bg-white/8" />
+         <ContextMenuLabel className="px-2 py-1 text-xs font-normal text-zinc-500">بلوک</ContextMenuLabel>
+         <EditorContextMenuItem icon={<Pilcrow className="size-4" />} onSelect={setParagraph}>
+            متن ساده
+         </EditorContextMenuItem>
+         <EditorContextMenuItem icon={<Heading1 className="size-4" />} onSelect={() => setHeading('h1')}>
+            تیتر ۱
+         </EditorContextMenuItem>
+         <EditorContextMenuItem icon={<Heading2 className="size-4" />} onSelect={() => setHeading('h2')}>
+            تیتر ۲
+         </EditorContextMenuItem>
+         <EditorContextMenuItem icon={<Heading3 className="size-4" />} onSelect={() => setHeading('h3')}>
+            تیتر ۳
+         </EditorContextMenuItem>
+         <EditorContextMenuItem icon={<Quote className="size-4" />} onSelect={setQuote}>
+            نقل‌قول
+         </EditorContextMenuItem>
+         <EditorContextMenuItem icon={<AlignRight className="size-4" />} onSelect={() => editor.dispatchCommand(FORMAT_ELEMENT_COMMAND, 'right')}>
+            راست‌چین
+         </EditorContextMenuItem>
+         <EditorContextMenuItem icon={<AlignCenter className="size-4" />} onSelect={() => editor.dispatchCommand(FORMAT_ELEMENT_COMMAND, 'center')}>
+            وسط‌چین
+         </EditorContextMenuItem>
+         <EditorContextMenuItem icon={<AlignLeft className="size-4" />} onSelect={() => editor.dispatchCommand(FORMAT_ELEMENT_COMMAND, 'left')}>
+            چپ‌چین
+         </EditorContextMenuItem>
+         <EditorContextMenuItem icon={<AlignJustify className="size-4" />} onSelect={() => editor.dispatchCommand(FORMAT_ELEMENT_COMMAND, 'justify')}>
+            تمام‌چین
+         </EditorContextMenuItem>
+
+         <ContextMenuSeparator className="bg-white/8" />
+         <ContextMenuLabel className="px-2 py-1 text-xs font-normal text-zinc-500">ساختار</ContextMenuLabel>
+         <EditorContextMenuItem
+            icon={<List className="size-4" />}
+            shortcut="-"
+            onSelect={() => editor.focus(() => editor.dispatchCommand(INSERT_UNORDERED_LIST_COMMAND, undefined))}
+         >
+            فهرست نقطه‌ای
+         </EditorContextMenuItem>
+         <EditorContextMenuItem
+            icon={<ListOrdered className="size-4" />}
+            shortcut="1."
+            onSelect={() => editor.focus(() => editor.dispatchCommand(INSERT_ORDERED_LIST_COMMAND, undefined))}
+         >
+            فهرست شماره‌دار
+         </EditorContextMenuItem>
+         <EditorContextMenuItem
+            icon={<ListChecks className="size-4" />}
+            shortcut="[]"
+            onSelect={() => editor.focus(() => editor.dispatchCommand(INSERT_CHECK_LIST_COMMAND, undefined))}
+         >
+            چک‌لیست
+         </EditorContextMenuItem>
+         <EditorContextMenuItem icon={<Table2 className="size-4" />} onSelect={insertTable}>
+            جدول
+         </EditorContextMenuItem>
+         <EditorContextMenuItem icon={<ImagePlus className="size-4" />} onSelect={() => insertImageUrlWithPrompt(editor)}>
+            تصویر از لینک
+         </EditorContextMenuItem>
+         {uploadImages ? (
+            <EditorContextMenuItem icon={<ImagePlus className="size-4" />} onSelect={() => selectAndUploadInlineImages(editor, uploadImages, onUploadError)}>
+               بارگذاری تصویر
+            </EditorContextMenuItem>
+         ) : null}
+
+         <ContextMenuSeparator className="bg-white/8" />
+         <ContextMenuLabel className="px-2 py-1 text-xs font-normal text-zinc-500">جدول</ContextMenuLabel>
+         <EditorContextMenuItem
+            disabled={!isInTable}
+            icon={<ArrowUp className="size-4" />}
+            onSelect={() => runTableCommand(() => $insertTableRowAtSelection(false))}
+         >
+            ردیف بالا
+         </EditorContextMenuItem>
+         <EditorContextMenuItem
+            disabled={!isInTable}
+            icon={<ArrowDown className="size-4" />}
+            onSelect={() => runTableCommand(() => $insertTableRowAtSelection(true))}
+         >
+            ردیف پایین
+         </EditorContextMenuItem>
+         <EditorContextMenuItem
+            disabled={!isInTable}
+            icon={<ArrowRight className="size-4" />}
+            onSelect={() => runTableCommand(() => $insertTableColumnAtSelection(false))}
+         >
+            ستون راست
+         </EditorContextMenuItem>
+         <EditorContextMenuItem
+            disabled={!isInTable}
+            icon={<ArrowLeft className="size-4" />}
+            onSelect={() => runTableCommand(() => $insertTableColumnAtSelection(true))}
+         >
+            ستون چپ
+         </EditorContextMenuItem>
+         <EditorContextMenuItem
+            disabled={!isInTable}
+            icon={<Rows3 className="size-4" />}
+            onSelect={() => runTableCommand($toggleCurrentTableRowHeader)}
+         >
+            تغییر هدر ردیف
+         </EditorContextMenuItem>
+         <EditorContextMenuItem
+            disabled={!isInTable}
+            icon={<Columns3 className="size-4" />}
+            onSelect={() => runTableCommand($toggleCurrentTableColumnHeader)}
+         >
+            تغییر هدر ستون
+         </EditorContextMenuItem>
+         <EditorContextMenuItem
+            disabled={!isInTable}
+            icon={<Trash2 className="size-4" />}
+            onSelect={() => runTableCommand($deleteTableRowAtSelection)}
+         >
+            حذف ردیف
+         </EditorContextMenuItem>
+         <EditorContextMenuItem
+            disabled={!isInTable}
+            icon={<Trash2 className="size-4" />}
+            onSelect={() => runTableCommand($deleteTableColumnAtSelection)}
+         >
+            حذف ستون
+         </EditorContextMenuItem>
+         <EditorContextMenuItem
+            disabled={!isInTable}
+            icon={<Trash2 className="size-4" />}
+            onSelect={() => runTableCommand($deleteCurrentTable)}
+         >
+            حذف جدول
+         </EditorContextMenuItem>
+      </ContextMenuContent>
+   );
+}
+
+function EditorContextMenuItem({
+   children,
+   disabled = false,
+   icon,
+   onSelect,
+   shortcut,
+}: {
+   children: ReactNode;
+   disabled?: boolean;
+   icon: ReactNode;
+   onSelect: () => void;
+   shortcut?: string;
+}) {
+   return (
+      <ContextMenuItem
+         className="flex h-8 cursor-default items-center gap-2 rounded-md px-2 text-sm text-zinc-300 outline-none focus:bg-white/[0.08] focus:text-zinc-100"
+         disabled={disabled}
+         onSelect={onSelect}
+      >
+         <span className="flex size-4 shrink-0 items-center justify-center text-zinc-500">{icon}</span>
+         <span className="min-w-0 flex-1 truncate">{children}</span>
+         {shortcut ? <ContextMenuShortcut className="ms-2 tracking-normal text-zinc-600">{shortcut}</ContextMenuShortcut> : null}
+      </ContextMenuItem>
+   );
+}
+
+function FloatingTextFormatToolbarPlugin(): JSX.Element | null {
+   const [editor] = useLexicalComposerContext();
+   const [toolbarState, setToolbarState] = useState({
+      isBold: false,
+      isCode: false,
+      isItalic: false,
+      isLink: false,
+      isStrikethrough: false,
+      isSubscript: false,
+      isSuperscript: false,
+      isUnderline: false,
+      visible: false,
+   });
+   const [style, setStyle] = useState<CSSProperties | null>(null);
+
+   const updateToolbar = useCallback(() => {
+      const rootElement = editor.getRootElement();
+      const ownerWindow = rootElement?.ownerDocument.defaultView || window;
+      const nativeSelection = getDOMSelection(ownerWindow);
+
+      editor.getEditorState().read(() => {
+         const selection = $getSelection();
+         if (
+            editor.isComposing() ||
+            !rootElement ||
+            !nativeSelection ||
+            nativeSelection.isCollapsed ||
+            !$isRangeSelection(selection) ||
+            !rootElement.contains(nativeSelection.anchorNode)
+         ) {
+            setToolbarState((current) => ({ ...current, visible: false }));
+            return;
+         }
+
+         const text = selection.getTextContent().replace(/\n/g, '').trim();
+         if (!text) {
+            setToolbarState((current) => ({ ...current, visible: false }));
+            return;
+         }
+
+         const nodes = selection.getNodes();
+         const hasTextNode = nodes.some((node) => $isTextNode(node) || $isParagraphNode(node) || $isHeadingNode(node));
+         if (!hasTextNode) {
+            setToolbarState((current) => ({ ...current, visible: false }));
+            return;
+         }
+
+         const rangeRect = getActiveSelectionRect(ownerWindow);
+         if (!rangeRect) {
+            setToolbarState((current) => ({ ...current, visible: false }));
+            return;
+         }
+
+         const width = 376;
+         const viewportPadding = 12;
+         const left = Math.min(
+            Math.max(viewportPadding, rangeRect.left + rangeRect.width / 2 - width / 2),
+            Math.max(viewportPadding, ownerWindow.innerWidth - width - viewportPadding)
+         );
+         const topCandidate = rangeRect.top - 48;
+         setStyle({
+            left,
+            position: 'fixed',
+            top: topCandidate < viewportPadding ? rangeRect.bottom + 8 : topCandidate,
+            width,
+         });
+         setToolbarState({
+            isBold: selection.hasFormat('bold'),
+            isCode: selection.hasFormat('code'),
+            isItalic: selection.hasFormat('italic'),
+            isLink: nodes.some((node) => $isLinkNode(node) || $isLinkNode(node.getParent())),
+            isStrikethrough: selection.hasFormat('strikethrough'),
+            isSubscript: selection.hasFormat('subscript'),
+            isSuperscript: selection.hasFormat('superscript'),
+            isUnderline: selection.hasFormat('underline'),
+            visible: true,
+         });
+      });
+   }, [editor]);
+
+   useEffect(() => {
+      document.addEventListener('selectionchange', updateToolbar);
+      window.addEventListener('resize', updateToolbar);
+      return () => {
+         document.removeEventListener('selectionchange', updateToolbar);
+         window.removeEventListener('resize', updateToolbar);
+      };
+   }, [updateToolbar]);
+
+   useEffect(() => {
+      return mergeRegister(
+         editor.registerUpdateListener(() => updateToolbar()),
+         editor.registerCommand(
+            SELECTION_CHANGE_COMMAND,
+            () => {
+               updateToolbar();
+               return false;
+            },
+            COMMAND_PRIORITY_LOW
+         )
+      );
+   }, [editor, updateToolbar]);
+
+   if (!toolbarState.visible || !style) return null;
+
+   return createPortal(
+      <div
+         className="z-50 flex items-center justify-center gap-1 rounded-lg border border-white/10 bg-[#202023] p-1.5 text-zinc-400 shadow-2xl"
+         dir="rtl"
+         style={style}
+      >
+         <FloatingToolbarButton active={toolbarState.isBold} label="پررنگ" onClick={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, 'bold')}>
+            <Bold className="size-4" />
+         </FloatingToolbarButton>
+         <FloatingToolbarButton active={toolbarState.isItalic} label="کج" onClick={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, 'italic')}>
+            <Italic className="size-4" />
+         </FloatingToolbarButton>
+         <FloatingToolbarButton active={toolbarState.isUnderline} label="زیرخط" onClick={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, 'underline')}>
+            <Underline className="size-4" />
+         </FloatingToolbarButton>
+         <FloatingToolbarButton active={toolbarState.isStrikethrough} label="خط خورده" onClick={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, 'strikethrough')}>
+            <Strikethrough className="size-4" />
+         </FloatingToolbarButton>
+         <FloatingToolbarButton active={toolbarState.isCode} label="کد" onClick={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, 'code')}>
+            <Code2 className="size-4" />
+         </FloatingToolbarButton>
+         <FloatingToolbarButton active={toolbarState.isSubscript} label="زیرنویس" onClick={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, 'subscript')}>
+            <Subscript className="size-4" />
+         </FloatingToolbarButton>
+         <FloatingToolbarButton active={toolbarState.isSuperscript} label="بالانویس" onClick={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, 'superscript')}>
+            <Superscript className="size-4" />
+         </FloatingToolbarButton>
+         <span className="mx-1 h-5 w-px bg-white/10" />
+         <FloatingToolbarButton active={toolbarState.isLink} label="لینک" onClick={() => insertLinkWithPrompt(editor)}>
+            <Link2 className="size-4" />
+         </FloatingToolbarButton>
+         <FloatingToolbarButton label="حذف لینک" onClick={() => removeLink(editor)}>
+            <Link2Off className="size-4" />
+         </FloatingToolbarButton>
+      </div>,
+      document.body
+   );
+}
+
+function FloatingToolbarButton({
+   active = false,
+   children,
+   label,
+   onClick,
+}: {
+   active?: boolean;
+   children: ReactNode;
+   label: string;
+   onClick: () => void;
+}) {
+   return (
+      <button
+         aria-label={label}
+         className={cn(
+            'flex size-7 items-center justify-center rounded-md transition hover:bg-white/10 hover:text-zinc-100',
+            active ? 'bg-indigo-500/20 text-indigo-200' : 'text-zinc-400'
+         )}
+         type="button"
+         onClick={onClick}
+         onMouseDown={(event) => event.preventDefault()}
+      >
+         {children}
+      </button>
    );
 }
 
@@ -1198,11 +2121,13 @@ function DescriptionDraggableBlockPlugin({ anchorElem }: { anchorElem: HTMLEleme
                ref={menuRef}
                className={cn(
                   draggableBlockMenuClassName,
-                  'absolute right-1 top-0 z-20 flex size-6 cursor-grab items-center justify-center rounded-md border border-white/10 bg-zinc-950/95 text-zinc-500 opacity-0 shadow-lg shadow-black/30 will-change-transform transition-colors hover:border-white/20 hover:text-zinc-200 active:cursor-grabbing'
+                  'pointer-events-none absolute inset-x-0 top-0 z-20 h-6 w-full opacity-0 will-change-transform'
                )}
                aria-hidden
             >
-               <GripVertical className="size-4" strokeWidth={2} />
+               <span className="pointer-events-auto absolute -right-4 top-0 flex size-6 cursor-grab items-center justify-center rounded-md border border-white/10 bg-zinc-950/95 text-zinc-500 shadow-lg shadow-black/30 transition-colors hover:border-white/20 hover:text-zinc-200 active:cursor-grabbing">
+                  <GripVertical className="size-4" strokeWidth={2} />
+               </span>
             </div>
          }
          targetLineComponent={
@@ -1377,7 +2302,19 @@ export function DescriptionEditor({
    const initialConfig = useMemo<InitialConfigType>(
       () => ({
          namespace: 'TaskaraDescriptionEditor',
-         nodes: [HeadingNode, QuoteNode, ListNode, ListItemNode, LinkNode, AutoLinkNode, InlineImageNode, MentionNode],
+         nodes: [
+            HeadingNode,
+            QuoteNode,
+            ListNode,
+            ListItemNode,
+            LinkNode,
+            AutoLinkNode,
+            TableNode,
+            TableRowNode,
+            TableCellNode,
+            InlineImageNode,
+            MentionNode,
+         ],
          editorState: isSerializedEditorValue(initialValueRef.current)
             ? initialValueRef.current
             : () => $setPlainTextValue(initialValueRef.current),
@@ -1391,69 +2328,80 @@ export function DescriptionEditor({
 
    return (
       <LexicalComposer initialConfig={initialConfig}>
-         <div
-            className={cn(
-               variant === 'framed'
-                  ? 'relative min-w-0 overflow-visible rounded-lg border border-white/8 bg-transparent text-right transition focus-within:border-indigo-400/35'
-                  : 'relative min-w-0 overflow-visible bg-transparent text-right',
-               className
-            )}
-            dir="rtl"
-         >
-            {showToolbar ? <DescriptionToolbar className={toolbarClassName} /> : null}
-            <div ref={setBlockAnchorElem} className="relative">
-               <RichTextPlugin
-                  contentEditable={
-                     <ContentEditable
-                        aria-label={ariaLabel || placeholder}
-                        aria-multiline
-                        className={cn(
-                           variant === 'framed'
-                              ? 'min-h-24 w-full overflow-auto break-words bg-transparent py-3 pl-3 pr-11 text-right text-sm leading-6 text-zinc-300 outline-none'
-                              : 'min-h-16 w-full overflow-auto break-words bg-transparent py-1 pl-0 pr-11 text-right text-sm leading-6 text-zinc-300 outline-none',
-                           contentClassName
-                        )}
-                        dir="rtl"
-                        spellCheck
+         <ContextMenu>
+            <ContextMenuTrigger asChild>
+               <div
+                  className={cn(
+                     variant === 'framed'
+                        ? 'relative min-w-0 overflow-visible rounded-lg border border-white/8 bg-transparent text-right transition focus-within:border-indigo-400/35'
+                        : 'relative min-w-0 overflow-visible bg-transparent text-right',
+                     className
+                  )}
+                  dir="rtl"
+               >
+                  {showToolbar ? <DescriptionToolbar className={toolbarClassName} /> : null}
+                  <div ref={setBlockAnchorElem} className="relative">
+                     <RichTextPlugin
+                        contentEditable={
+                           <ContentEditable
+                              aria-label={ariaLabel || placeholder}
+                              aria-multiline
+                              className={cn(
+                                 variant === 'framed'
+                                    ? 'min-h-24 w-full overflow-auto break-words bg-transparent py-3 pl-3 pr-11 text-right text-sm leading-6 text-zinc-300 outline-none'
+                                    : 'min-h-16 w-full overflow-auto break-words bg-transparent py-1 pl-0 pr-11 text-right text-sm leading-6 text-zinc-300 outline-none',
+                                 contentClassName,
+                                 'pr-2'
+                              )}
+                              dir="rtl"
+                              spellCheck
+                           />
+                        }
+                        placeholder={
+                           <div
+                              className={cn(
+                                 variant === 'framed'
+                                    ? 'pointer-events-none absolute inset-x-0 top-3 pl-3 pr-11 text-right text-sm leading-6 text-zinc-600'
+                                    : 'pointer-events-none absolute inset-x-0 top-1 pl-0 pr-11 text-right text-sm leading-6 text-zinc-600',
+                                 placeholderClassName,
+                                 'pr-2'
+                              )}
+                              dir="rtl"
+                           >
+                              {placeholder}
+                           </div>
+                        }
+                        ErrorBoundary={LexicalErrorBoundary}
                      />
-                  }
-                  placeholder={
-                     <div
-                        className={cn(
-                           variant === 'framed'
-                              ? 'pointer-events-none absolute inset-x-0 top-3 pl-3 pr-11 text-right text-sm leading-6 text-zinc-600'
-                              : 'pointer-events-none absolute inset-x-0 top-1 pl-0 pr-11 text-right text-sm leading-6 text-zinc-600',
-                           placeholderClassName
-                        )}
-                        dir="rtl"
-                     >
-                        {placeholder}
-                     </div>
-                  }
-                  ErrorBoundary={LexicalErrorBoundary}
-               />
-            </div>
-            <HistoryPlugin />
-            <ListPlugin />
-            <CheckListPlugin />
-            <PlaygroundTabIndentationPlugin maxIndent={7} />
-            {blockAnchorElem ? <DescriptionDraggableBlockPlugin anchorElem={blockAnchorElem} /> : null}
-            <MarkdownShortcutPlugin transformers={descriptionMarkdownTransformers} />
-            <HeadingEnterPlugin />
-            <InlineImagesPlugin uploadImages={uploadInlineImages} onUploadError={onInlineImageUploadError} />
-            <CompactChecklistShortcutPlugin />
-            <LinkPlugin />
-            <MentionsPlugin users={users} />
-            <SlashCommandsPlugin />
-            <DescriptionEditorBridge
-               value={value}
-               onBlur={onBlur}
-               onCancel={onCancel}
-               onChange={onChange}
-               onFocus={onFocus}
-            />
-            {autoFocus ? <AutoFocusPlugin defaultSelection="rootEnd" /> : null}
-         </div>
+                  </div>
+                  <HistoryPlugin />
+                  <ListPlugin />
+                  <CheckListPlugin />
+                  <PlaygroundTabIndentationPlugin maxIndent={7} />
+                  {blockAnchorElem ? <DescriptionDraggableBlockPlugin anchorElem={blockAnchorElem} /> : null}
+                  <MarkdownShortcutPlugin transformers={descriptionMarkdownTransformers} />
+                  <HeadingEnterPlugin />
+                  <TablePlugin hasCellMerge={false} hasHorizontalScroll hasTabHandler />
+                  <MarkdownTablePastePlugin />
+                  <InlineImagesPlugin uploadImages={uploadInlineImages} onUploadError={onInlineImageUploadError} />
+                  <CompactChecklistShortcutPlugin />
+                  <LinkPlugin />
+                  <AutoLinkPlugin matchers={autoLinkMatchers} />
+                  <MentionsPlugin users={users} />
+                  <FloatingTextFormatToolbarPlugin />
+                  <SlashCommandsPlugin uploadImages={uploadInlineImages} onUploadError={onInlineImageUploadError} />
+                  <DescriptionEditorBridge
+                     value={value}
+                     onBlur={onBlur}
+                     onCancel={onCancel}
+                     onChange={onChange}
+                     onFocus={onFocus}
+                  />
+                  {autoFocus ? <AutoFocusPlugin defaultSelection="rootEnd" /> : null}
+               </div>
+            </ContextMenuTrigger>
+            <DescriptionContextMenu uploadImages={uploadInlineImages} onUploadError={onInlineImageUploadError} />
+         </ContextMenu>
       </LexicalComposer>
    );
 }

@@ -22,10 +22,11 @@ import { SidebarProvider } from '@/components/ui/sidebar';
 import { LinearAvatar, ProjectGlyph, ShortcutKey, StatusIcon } from '@/components/taskara/linear-ui';
 import { fa } from '@/lib/fa-copy';
 import { useWorkspaceTaskSync } from '@/lib/task-sync-provider';
-import type { TaskaraTask, TaskaraView } from '@/lib/taskara-types';
+import { taskaraRequest } from '@/lib/taskara-client';
+import type { PaginatedResponse, TaskaraKnowledgePage, TaskaraTask, TaskaraView } from '@/lib/taskara-types';
 import { areDesktopNotificationsEnabled, setDesktopNotificationsEnabled as persistDesktopNotificationsEnabled } from '@/lib/notification-service-worker';
 import { cn } from '@/lib/utils';
-import { Activity, Bell, CalendarDays, FolderKanban, LayoutTemplate, ListTodo, Megaphone, Plus, Search, Settings, Trophy, Users, UsersRound } from 'lucide-react';
+import { Activity, Bell, BookOpen, CalendarDays, FileText, FolderKanban, LayoutTemplate, ListTodo, Megaphone, Plus, Search, Settings, Trophy, Users, UsersRound } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 interface MainLayoutProps {
@@ -176,6 +177,7 @@ export default function MainLayout({ children, header, headersNumber = 2, showSi
    const { tasks, projects, teams, users, views } = useWorkspaceTaskSync();
    const [commandOpen, setCommandOpen] = React.useState(false);
    const [commandQuery, setCommandQuery] = React.useState('');
+   const [knowledgeResults, setKnowledgeResults] = React.useState<TaskaraKnowledgePage[]>([]);
    const [shortcutsOpen, setShortcutsOpen] = React.useState(false);
    const [notificationPromptOpen, setNotificationPromptOpen] = React.useState(false);
    const [notificationPromptDontShowAgain, setNotificationPromptDontShowAgain] = React.useState(false);
@@ -189,7 +191,7 @@ export default function MainLayout({ children, header, headersNumber = 2, showSi
    const isProjectsRoute =
       location.pathname.endsWith('/projects') || (pathParts[1] === 'team' && pathParts[3] === 'projects');
 
-   const pageOwnsScroll = ['announcements', 'heartbeat', 'inbox', 'issue', 'meetings', 'projects', 'settings', 'tasks', 'team'].includes(routeKey);
+   const pageOwnsScroll = ['announcements', 'heartbeat', 'inbox', 'issue', 'meetings', 'projects', 'settings', 'tasks', 'team', 'wiki'].includes(routeKey);
    const browserNotificationHelp = React.useMemo(() => {
       if (typeof navigator === 'undefined') return getBrowserNotificationHelp('other');
       return getBrowserNotificationHelp(detectBrowserForNotificationHelp(navigator.userAgent));
@@ -410,6 +412,13 @@ export default function MainLayout({ children, header, headersNumber = 2, showSi
             run: () => navigate(`/${orgId}/meetings`),
          },
          {
+            id: 'go-wiki',
+            label: fa.command.goWiki,
+            description: fa.pages.wikiDescription,
+            icon: BookOpen,
+            run: () => navigate(`/${orgId}/wiki`),
+         },
+         {
             id: 'go-projects',
             label: fa.command.goProjects,
             description: fa.pages.projectsDescription,
@@ -460,6 +469,30 @@ export default function MainLayout({ children, header, headersNumber = 2, showSi
       [commandQuery]
    );
    const hasCommandQuery = Boolean(normalizedCommandQuery);
+
+   React.useEffect(() => {
+      if (!commandOpen || !hasCommandQuery) {
+         setKnowledgeResults([]);
+         return;
+      }
+
+      let cancelled = false;
+      const timer = window.setTimeout(() => {
+         const params = new URLSearchParams({ q: normalizedCommandQuery, limit: '5' });
+         void taskaraRequest<PaginatedResponse<TaskaraKnowledgePage>>(`/knowledge/search?${params.toString()}`)
+            .then((result) => {
+               if (!cancelled) setKnowledgeResults(result.items);
+            })
+            .catch(() => {
+               if (!cancelled) setKnowledgeResults([]);
+            });
+      }, 200);
+
+      return () => {
+         cancelled = true;
+         window.clearTimeout(timer);
+      };
+   }, [commandOpen, hasCommandQuery, normalizedCommandQuery]);
 
    const visibleCommandActions = React.useMemo(() => {
       if (!hasCommandQuery) return commandActions;
@@ -564,6 +597,7 @@ export default function MainLayout({ children, header, headersNumber = 2, showSi
 
    const hasEntityMatches =
       genericIssueResults.length > 0 ||
+      knowledgeResults.length > 0 ||
       projectResults.length > 0 ||
       viewResults.length > 0 ||
       teamResults.length > 0 ||
@@ -600,7 +634,7 @@ export default function MainLayout({ children, header, headersNumber = 2, showSi
             <CommandInput
                value={commandQuery}
                onValueChange={setCommandQuery}
-               placeholder="دستور اجرا کن یا در کارها، پروژه‌ها و اعضا جستجو کن..."
+               placeholder="دستور اجرا کن یا در کارها، دانش‌نامه، پروژه‌ها و اعضا جستجو کن..."
             />
             <CommandList className="max-h-[520px] p-1.5" data-testid="command-menu">
                {!hasAnyCommandItem ? (
@@ -687,6 +721,38 @@ export default function MainLayout({ children, header, headersNumber = 2, showSi
                               <span className="block truncate text-xs text-zinc-500">
                                  {task.key}
                                  {task.project?.name ? ` • ${task.project.name}` : ''}
+                              </span>
+                           </span>
+                        </CommandItem>
+                     ))}
+                  </CommandGroup>
+               ) : null}
+               {knowledgeResults.length > 0 ? (
+                  <CommandGroup heading="دانش‌نامه">
+                     {knowledgeResults.map((page) => (
+                        <CommandItem
+                           key={page.id}
+                           value={`knowledge-${page.id}`}
+                           keywords={[
+                              page.title,
+                              page.summary || '',
+                              page.contentText || '',
+                              page.space?.name || '',
+                              page.space?.key || '',
+                           ]}
+                           className="rounded-md px-2 py-2"
+                           onSelect={() =>
+                              runCommand(() =>
+                                 navigate(`/${orgId}/wiki/${page.space?.key || page.spaceId}/${page.id}`)
+                              )
+                           }
+                        >
+                           <FileText className="size-4 text-zinc-400" />
+                           <span className="min-w-0">
+                              <span className="block truncate text-sm text-zinc-200">{page.title}</span>
+                              <span className="block truncate text-xs text-zinc-500">
+                                 {page.space?.name || fa.nav.wiki}
+                                 {page.verified ? ' • تأییدشده' : ''}
                               </span>
                            </span>
                         </CommandItem>

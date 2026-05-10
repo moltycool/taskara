@@ -26,6 +26,7 @@ import {
    SidebarMenuButton,
    SidebarMenuItem,
 } from '@/components/ui/sidebar';
+import { useTheme } from 'next-themes';
 import {
    LinearAvatar,
    SidebarInboxIcon,
@@ -44,17 +45,22 @@ import type { AnnouncementsResponse, TaskaraMeeting, TaskaraWorkspaceMembership 
 import { cn } from '@/lib/utils';
 import {
    Activity,
+   BookOpen,
    CalendarDays,
    ChevronDown,
+   Laptop,
    Megaphone,
+   Moon,
    Plus,
    Search,
+   Sun,
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
    const location = useLocation();
    const navigate = useNavigate();
+   const { theme, setTheme } = useTheme();
    const pathname = location.pathname;
    const orgId = pathname.split('/').filter(Boolean)[0] || 'taskara';
    const [me, setMe] = React.useState<TaskaraMe | null>(null);
@@ -168,6 +174,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       { title: fa.nav.inbox, href: `/${orgId}/inbox`, icon: SidebarInboxIcon, count: unreadCount },
       { title: fa.nav.announcements, href: `/${orgId}/announcements`, icon: Megaphone, count: announcementUnreadCount },
       { title: fa.nav.meetings, href: `/${orgId}/meetings`, icon: CalendarDays, count: meetingCount },
+      { title: fa.nav.wiki, href: `/${orgId}/wiki`, icon: BookOpen },
       { title: fa.nav.allTasks, href: `/${orgId}/tasks`, icon: SidebarIssueIcon, count: allIssueCount },
       { title: fa.nav.myIssues, href: `/${orgId}/team/all/all`, icon: SidebarMyIssuesIcon, count: myIssueCount },
       { title: fa.nav.heartbeat, href: `/${orgId}/heartbeat`, icon: Activity },
@@ -175,7 +182,16 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
    const teamItems = (team: TaskaraTeam) => [
       { title: fa.nav.issues, href: `/${orgId}/team/${team.slug}/all`, icon: SidebarIssueIcon },
       { title: fa.nav.projects, href: `/${orgId}/team/${team.slug}/projects`, icon: SidebarProjectIcon },
+      { title: fa.nav.wiki, href: `/${orgId}/wiki/team-${team.slug}`, icon: BookOpen },
    ];
+   const currentTheme = theme || 'system';
+   const themeOptions = [
+      { value: 'light', label: 'روشن', icon: Sun },
+      { value: 'dark', label: 'تیره', icon: Moon },
+      { value: 'system', label: 'سیستم', icon: Laptop },
+   ];
+   const currentThemeLabel =
+      themeOptions.find((item) => item.value === currentTheme)?.label || 'سیستم';
 
    return (
       <Sidebar side="right" collapsible="offcanvas" className="border-l border-white/6 bg-[#070708]" {...props}>
@@ -233,6 +249,31 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                                        <span className="truncate text-sm">{item.workspace.name}</span>
                                        <span className="truncate text-xs text-zinc-500">{item.workspace.slug}</span>
                                     </div>
+                                    {isActive ? <span className="text-xs text-lime-400">فعال</span> : null}
+                                 </DropdownMenuItem>
+                              );
+                           })}
+                        </DropdownMenuSubContent>
+                     </DropdownMenuSub>
+                     <DropdownMenuSeparator className="-mx-2 my-2 bg-white/8" />
+                     <DropdownMenuSub>
+                        <DropdownMenuSubTrigger className="h-8 rounded-md px-3 text-sm">
+                           <span className="min-w-0 flex-1 truncate">پوسته</span>
+                           <DropdownMenuShortcut className="ms-3 tracking-normal">{currentThemeLabel}</DropdownMenuShortcut>
+                        </DropdownMenuSubTrigger>
+                        <DropdownMenuSubContent className="w-44 rounded-lg border-white/10 bg-[#1b1b1d] text-zinc-200">
+                           {themeOptions.map((item) => {
+                              const Icon = item.icon;
+                              const isActive = currentTheme === item.value;
+
+                              return (
+                                 <DropdownMenuItem
+                                    key={item.value}
+                                    className="h-8 rounded-md px-3 text-sm"
+                                    onSelect={() => setTheme(item.value)}
+                                 >
+                                    <Icon className="size-4 text-zinc-500" />
+                                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
                                     {isActive ? <span className="text-xs text-lime-400">فعال</span> : null}
                                  </DropdownMenuItem>
                               );

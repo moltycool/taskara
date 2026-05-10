@@ -11,6 +11,12 @@ type LiveRefreshOptions = {
    fireOnMount?: boolean;
    intervalMs?: number;
    minIntervalMs?: number;
+   refreshOnFocus?: boolean;
+   refreshOnInterval?: boolean;
+   refreshOnOnline?: boolean;
+   refreshOnPageShow?: boolean;
+   refreshOnVisibility?: boolean;
+   refreshOnWorkspaceEvent?: boolean;
 };
 
 export function dispatchWorkspaceRefresh(detail: WorkspaceRefreshDetail = {}) {
@@ -24,6 +30,12 @@ export function useLiveRefresh(onRefresh: () => void | Promise<void>, options: L
       fireOnMount = true,
       intervalMs = 60000,
       minIntervalMs = 1500,
+      refreshOnFocus = true,
+      refreshOnInterval = true,
+      refreshOnOnline = true,
+      refreshOnPageShow = true,
+      refreshOnVisibility = true,
+      refreshOnWorkspaceEvent = true,
    } = options;
    const onRefreshRef = useRef(onRefresh);
    const inFlightRef = useRef(false);
@@ -72,20 +84,31 @@ export function useLiveRefresh(onRefresh: () => void | Promise<void>, options: L
       const handlePageShow = () => requestRefresh(true);
 
       if (fireOnMount) requestRefresh(true);
-      const interval = window.setInterval(handleWake, intervalMs);
-      window.addEventListener('focus', handleWake);
-      window.addEventListener('online', handleWake);
-      window.addEventListener('pageshow', handlePageShow);
-      window.addEventListener(workspaceRefreshEvent, handleWorkspaceRefresh);
-      document.addEventListener('visibilitychange', handleWake);
+      const interval = refreshOnInterval ? window.setInterval(handleWake, intervalMs) : null;
+      if (refreshOnFocus) window.addEventListener('focus', handleWake);
+      if (refreshOnOnline) window.addEventListener('online', handleWake);
+      if (refreshOnPageShow) window.addEventListener('pageshow', handlePageShow);
+      if (refreshOnWorkspaceEvent) window.addEventListener(workspaceRefreshEvent, handleWorkspaceRefresh);
+      if (refreshOnVisibility) document.addEventListener('visibilitychange', handleWake);
 
       return () => {
-         window.clearInterval(interval);
-         window.removeEventListener('focus', handleWake);
-         window.removeEventListener('online', handleWake);
-         window.removeEventListener('pageshow', handlePageShow);
-         window.removeEventListener(workspaceRefreshEvent, handleWorkspaceRefresh);
-         document.removeEventListener('visibilitychange', handleWake);
+         if (interval) window.clearInterval(interval);
+         if (refreshOnFocus) window.removeEventListener('focus', handleWake);
+         if (refreshOnOnline) window.removeEventListener('online', handleWake);
+         if (refreshOnPageShow) window.removeEventListener('pageshow', handlePageShow);
+         if (refreshOnWorkspaceEvent) window.removeEventListener(workspaceRefreshEvent, handleWorkspaceRefresh);
+         if (refreshOnVisibility) document.removeEventListener('visibilitychange', handleWake);
       };
-   }, [enabled, fireOnMount, intervalMs, requestRefresh]);
+   }, [
+      enabled,
+      fireOnMount,
+      intervalMs,
+      refreshOnFocus,
+      refreshOnInterval,
+      refreshOnOnline,
+      refreshOnPageShow,
+      refreshOnVisibility,
+      refreshOnWorkspaceEvent,
+      requestRefresh,
+   ]);
 }

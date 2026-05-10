@@ -76,7 +76,8 @@ export function taskInboxNotificationWhere(
       { taskId: null, announcementId: null, meetingId: null },
       { task: { is: { workspaceId } } },
       { announcement: { is: { workspaceId } } },
-      { meeting: { is: { workspaceId } } }
+      { meeting: { is: { workspaceId } } },
+      { knowledgePage: { is: { workspaceId } } }
     ],
     ...(options.unreadOnly ? { readAt: null } : {})
   };

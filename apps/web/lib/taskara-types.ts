@@ -92,6 +92,112 @@ export interface TaskaraMeeting {
    _count?: { participants?: number; tasks?: number };
 }
 
+export interface TaskaraKnowledgeSpace {
+   id: string;
+   workspaceId: string;
+   type: 'WORKSPACE' | 'TEAM' | 'PROJECT';
+   teamId?: string | null;
+   projectId?: string | null;
+   key: string;
+   name: string;
+   description?: string | null;
+   icon?: string | null;
+   createdAt: string;
+   updatedAt: string;
+   team?: { id: string; name: string; slug: string } | null;
+   project?: { id: string; name: string; keyPrefix: string; teamId?: string | null } | null;
+   createdBy?: { id: string; name: string; email: string; avatarUrl?: string | null } | null;
+   updatedBy?: { id: string; name: string; email: string; avatarUrl?: string | null } | null;
+   _count?: { pages?: number };
+}
+
+export interface TaskaraKnowledgePage {
+   id: string;
+   workspaceId: string;
+   spaceId: string;
+   parentId?: string | null;
+   slug: string;
+   path: string;
+   title: string;
+   summary?: string | null;
+   icon?: string | null;
+   content: unknown;
+   contentText: string;
+   status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+   ownerId?: string | null;
+   verifiedAt?: string | null;
+   verifiedById?: string | null;
+   verificationExpiresAt?: string | null;
+   verified?: boolean;
+   archivedAt?: string | null;
+   position: number;
+   version: number;
+   createdAt: string;
+   updatedAt: string;
+   space?: TaskaraKnowledgeSpace;
+   parent?: { id: string; title: string; slug: string; path: string } | null;
+   owner?: { id: string; name: string; email: string; avatarUrl?: string | null } | null;
+   createdBy?: { id: string; name: string; email: string; avatarUrl?: string | null } | null;
+   updatedBy?: { id: string; name: string; email: string; avatarUrl?: string | null } | null;
+   verifiedBy?: { id: string; name: string; email: string; avatarUrl?: string | null } | null;
+   labels?: Array<{ label: { id: string; name: string; color?: string } }>;
+   attachments?: TaskaraKnowledgeAttachment[];
+   _count?: { children?: number; comments?: number; attachments?: number; references?: number };
+}
+
+export interface TaskaraKnowledgeAttachment {
+   id: string;
+   pageId: string;
+   commentId?: string | null;
+   name: string;
+   documentId?: string | null;
+   object: string;
+   url: string;
+   mimeType?: string | null;
+   sizeBytes?: number | null;
+   createdAt: string;
+}
+
+export interface TaskaraKnowledgeComment {
+   id: string;
+   workspaceId: string;
+   pageId: string;
+   authorId?: string | null;
+   body: string;
+   anchor?: unknown;
+   resolvedAt?: string | null;
+   resolvedById?: string | null;
+   createdAt: string;
+   updatedAt: string;
+   author?: { id: string; name: string; email: string; avatarUrl?: string | null } | null;
+   resolvedBy?: { id: string; name: string; email: string; avatarUrl?: string | null } | null;
+   attachments?: TaskaraKnowledgeAttachment[];
+}
+
+export interface TaskaraKnowledgePageVersion {
+   id: string;
+   pageId: string;
+   version: number;
+   title: string;
+   content: unknown;
+   contentText: string;
+   reason?: string | null;
+   createdAt: string;
+   author?: { id: string; name: string; email: string; avatarUrl?: string | null } | null;
+}
+
+export interface TaskaraKnowledgeReference {
+   id: string;
+   workspaceId: string;
+   pageId: string;
+   type: 'PAGE' | 'TASK' | 'PROJECT' | 'MEETING' | 'ANNOUNCEMENT' | 'EXTERNAL_URL';
+   targetId?: string | null;
+   url?: string | null;
+   title?: string | null;
+   createdAt: string;
+   page: TaskaraKnowledgePage;
+}
+
 export type TaskViewLayout = 'list' | 'board';
 export type TaskViewGrouping = 'status' | 'assignee' | 'project' | 'priority';
 export type TaskViewSubGrouping = 'none' | TaskViewGrouping;
@@ -258,6 +364,13 @@ export interface TaskaraNotification {
       status: string;
       scheduledAt?: string | null;
       heldAt?: string | null;
+   } | null;
+   knowledgePage?: {
+      id: string;
+      title: string;
+      path: string;
+      status: string;
+      updatedAt?: string;
    } | null;
 }
 

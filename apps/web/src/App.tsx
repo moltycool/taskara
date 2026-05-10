@@ -6,6 +6,7 @@ import { AcceptInvitePage, LoginPage, OnboardingPage, SignupPage } from '@/compo
 import { HeartbeatView } from '@/components/taskara/heartbeat-view';
 import { InboxView } from '@/components/taskara/inbox-view';
 import { IssuePage } from '@/components/taskara/issue-page';
+import { KnowledgeView } from '@/components/taskara/knowledge-view';
 import { LeaderboardView } from '@/components/taskara/leaderboard-view';
 import { MembersView } from '@/components/taskara/members-view';
 import { MeetingsView } from '@/components/taskara/meetings-view';
@@ -30,6 +31,10 @@ const pageMetaByRoute = {
   meetings: {
     title: fa.nav.meetings,
     description: fa.pages.meetingsDescription,
+  },
+  wiki: {
+    title: fa.nav.wiki,
+    description: fa.pages.wikiDescription,
   },
   tasks: {
     title: fa.nav.allTasks,
@@ -133,6 +138,9 @@ export function App() {
         <Route path="announcements/:announcementId" element={<WorkspacePage><AnnouncementsView /></WorkspacePage>} />
         <Route path="meetings" element={<WorkspacePage><MeetingsView /></WorkspacePage>} />
         <Route path="meetings/:meetingId" element={<WorkspacePage><MeetingsView /></WorkspacePage>} />
+        <Route path="wiki" element={<WorkspacePage><KnowledgeView /></WorkspacePage>} />
+        <Route path="wiki/:spaceKey" element={<WorkspacePage><KnowledgeView /></WorkspacePage>} />
+        <Route path="wiki/:spaceKey/:pageId" element={<WorkspacePage><KnowledgeView /></WorkspacePage>} />
         <Route path="leaderboard" element={<WorkspacePage><LeaderboardView /></WorkspacePage>} />
         <Route path="heartbeat" element={<WorkspacePage><HeartbeatView /></WorkspacePage>} />
         <Route path="members" element={<WorkspacePage><MembersView /></WorkspacePage>} />

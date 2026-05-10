@@ -15,6 +15,7 @@ import {
    DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DescriptionEditor } from '@/components/taskara/description-editor';
 import { LazyJalaliDatePicker } from '@/components/taskara/lazy-jalali-date-picker';
 import { LinearAvatar } from '@/components/taskara/linear-ui';
@@ -25,6 +26,7 @@ import { taskaraRequest } from '@/lib/taskara-client';
 import type { PaginatedResponse, SmsSendSummary, TaskaraMeeting, TaskaraProject, TaskaraUser } from '@/lib/taskara-types';
 import { fa } from '@/lib/fa-copy';
 import { cn } from '@/lib/utils';
+import { EMPTY_SELECT_VALUE, fromSelectValue, toSelectValue } from '@/lib/select-utils';
 
 const emptyMeetingForm = {
    title: '',
@@ -303,33 +305,57 @@ export function MeetingsView() {
                         placeholder={fa.meeting.descriptionPlaceholder}
                      />
                      <div className="mt-auto flex flex-wrap items-center gap-1.5 pb-4">
-                        <label className="relative inline-flex h-6 max-w-[196px] shrink-0">
+                        <div className="relative inline-flex h-6 max-w-[196px] shrink-0">
                            <span className="sr-only">{fa.meeting.project}</span>
-                           <select
-                              aria-label={fa.meeting.project}
-                              className="h-6 min-w-0 cursor-pointer appearance-none rounded-full border border-white/8 bg-[#2a2a2d] py-0 px-2.5 text-[12px] font-normal text-zinc-300 shadow-[inset_0_1px_0_rgb(255_255_255/0.04)] outline-none transition hover:bg-[#303033] focus:ring-2 focus:ring-indigo-400/35"
-                              value={form.projectId}
-                              onChange={(event) => setForm((current) => ({ ...current, projectId: event.target.value }))}
+                           <Select
+                              value={toSelectValue(form.projectId)}
+                              onValueChange={(value) =>
+                                 setForm((current) => ({ ...current, projectId: fromSelectValue(value) }))
+                              }
                            >
-                              <option value="">{fa.meeting.project}</option>
-                              {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-                           </select>
-                        </label>
-                        <label className="relative inline-flex h-6 max-w-[196px] shrink-0">
+                              <SelectTrigger
+                                 aria-label={fa.meeting.project}
+                                 className="h-6 min-w-0 rounded-full border-white/8 bg-[#2a2a2d] py-0 px-2.5 text-[12px] font-normal text-zinc-300 shadow-[inset_0_1px_0_rgb(255_255_255/0.04)] hover:bg-[#303033]"
+                              >
+                                 <SelectValue placeholder={fa.meeting.project} />
+                              </SelectTrigger>
+                              <SelectContent className="rounded-xl border-white/10 bg-[#202023] text-zinc-100">
+                                 <SelectItem value={EMPTY_SELECT_VALUE}>{fa.meeting.project}</SelectItem>
+                                 {projects.map((project) => (
+                                    <SelectItem key={project.id} value={project.id}>
+                                       {project.name}
+                                    </SelectItem>
+                                 ))}
+                              </SelectContent>
+                           </Select>
+                        </div>
+                        <div className="relative inline-flex h-6 max-w-[196px] shrink-0">
                            <span className="sr-only">{fa.meeting.owner}</span>
                            <span className="pointer-events-none absolute start-2 top-1/2 z-10 flex -translate-y-1/2 items-center">
                               <Users className="size-3.5 text-zinc-500" />
                            </span>
-                           <select
-                              aria-label={fa.meeting.owner}
-                              className="h-6 min-w-0 cursor-pointer appearance-none rounded-full border border-white/8 bg-[#2a2a2d] py-0 ps-6 pe-2.5 text-[12px] font-normal text-zinc-300 shadow-[inset_0_1px_0_rgb(255_255_255/0.04)] outline-none transition hover:bg-[#303033] focus:ring-2 focus:ring-indigo-400/35"
-                              value={form.ownerId}
-                              onChange={(event) => setForm((current) => ({ ...current, ownerId: event.target.value }))}
+                           <Select
+                              value={toSelectValue(form.ownerId)}
+                              onValueChange={(value) =>
+                                 setForm((current) => ({ ...current, ownerId: fromSelectValue(value) }))
+                              }
                            >
-                              <option value="">{fa.meeting.owner}</option>
-                              {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
-                           </select>
-                        </label>
+                              <SelectTrigger
+                                 aria-label={fa.meeting.owner}
+                                 className="h-6 min-w-0 rounded-full border-white/8 bg-[#2a2a2d] py-0 ps-6 pe-2.5 text-[12px] font-normal text-zinc-300 shadow-[inset_0_1px_0_rgb(255_255_255/0.04)] hover:bg-[#303033]"
+                              >
+                                 <SelectValue placeholder={fa.meeting.owner} />
+                              </SelectTrigger>
+                              <SelectContent className="rounded-xl border-white/10 bg-[#202023] text-zinc-100">
+                                 <SelectItem value={EMPTY_SELECT_VALUE}>{fa.meeting.owner}</SelectItem>
+                                 {users.map((user) => (
+                                    <SelectItem key={user.id} value={user.id}>
+                                       {user.name}
+                                    </SelectItem>
+                                 ))}
+                              </SelectContent>
+                           </Select>
+                        </div>
                         <div className="w-[260px] max-w-full">
                            <LazyJalaliDatePicker
                               ariaLabel={fa.meeting.scheduledAt}

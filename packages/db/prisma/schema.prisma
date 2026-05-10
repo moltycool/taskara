@@ -114,6 +114,27 @@ enum SmsDeliveryStatus {
   SKIPPED
 }
 
+enum KnowledgeSpaceType {
+  WORKSPACE
+  TEAM
+  PROJECT
+}
+
+enum KnowledgePageStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum KnowledgeReferenceType {
+  PAGE
+  TASK
+  PROJECT
+  MEETING
+  ANNOUNCEMENT
+  EXTERNAL_URL
+}
+
 model Workspace {
   id          String   @id @default(uuid()) @db.Uuid
   name        String
@@ -122,70 +143,86 @@ model Workspace {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  users              WorkspaceMember[]
-  teams              Team[]
-  projects           Project[]
-  tasks              Task[]
-  labels             Label[]
-  cycles             Cycle[]
-  views              View[]
-  announcements      Announcement[]
+  users                  WorkspaceMember[]
+  teams                  Team[]
+  projects               Project[]
+  tasks                  Task[]
+  labels                 Label[]
+  cycles                 Cycle[]
+  views                  View[]
+  announcements          Announcement[]
   announcementRecipients AnnouncementRecipient[]
-  meetings           Meeting[]
-  meetingParticipants MeetingParticipant[]
-  notifications      Notification[]
-  taskSubscriptions  TaskSubscription[]
-  activityLogs       ActivityLog[]
-  smsDeliveries      SmsDelivery[]
-  integrations       IntegrationAccount[]
-  mattermostBindings MattermostBinding[]
-  agentRuns          AgentRun[]
-  invites            WorkspaceInvite[]
+  meetings               Meeting[]
+  meetingParticipants    MeetingParticipant[]
+  knowledgeSpaces        KnowledgeSpace[]
+  knowledgePages         KnowledgePage[]
+  knowledgeLabels        KnowledgeLabel[]
+  knowledgeComments      KnowledgePageComment[]
+  knowledgeSubscriptions KnowledgePageSubscription[]
+  knowledgeReferences    KnowledgePageReference[]
+  notifications          Notification[]
+  taskSubscriptions      TaskSubscription[]
+  activityLogs           ActivityLog[]
+  smsDeliveries          SmsDelivery[]
+  integrations           IntegrationAccount[]
+  mattermostBindings     MattermostBinding[]
+  agentRuns              AgentRun[]
+  invites                WorkspaceInvite[]
 }
 
 model User {
-  id                 String   @id @default(uuid()) @db.Uuid
-  email              String   @unique
-  name               String
-  phone              String?  @unique
-  passwordHash       String?
-  mattermostUserId   String?  @unique
-  mattermostUsername String?  @unique
-  avatarUrl          String?
+  id                    String    @id @default(uuid()) @db.Uuid
+  email                 String    @unique
+  name                  String
+  phone                 String?   @unique
+  passwordHash          String?
+  mattermostUserId      String?   @unique
+  mattermostUsername    String?   @unique
+  avatarUrl             String?
   onboardingCompletedAt DateTime?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
-  workspaces         WorkspaceMember[]
-  authSessions       AuthSession[]
-  teamMemberships    TeamMember[]
-  projectMemberships ProjectMember[]
-  ledProjects        Project[] @relation("ProjectLead")
-  assignedTasks      Task[]    @relation("AssignedTasks")
-  reportedTasks      Task[]    @relation("ReportedTasks")
-  createdAnnouncements Announcement[] @relation("AnnouncementCreator")
-  announcementRecipients AnnouncementRecipient[]
-  ownedMeetings      Meeting[] @relation("MeetingOwner")
-  createdMeetings    Meeting[] @relation("MeetingCreator")
-  meetingParticipants MeetingParticipant[]
-  taskSubscriptions  TaskSubscription[]
-  comments           TaskComment[]
-  notifications      Notification[]
-  activityLogs       ActivityLog[]
-  smsDeliveries      SmsDelivery[] @relation("SmsDeliveryRequester")
-  createdAgentRuns   AgentRun[]
-  approvedActions    AgentAction[]
-  sentInvites        WorkspaceInvite[] @relation("WorkspaceInviteInviter")
-  acceptedInvites    WorkspaceInvite[] @relation("WorkspaceInviteAccepter")
+  workspaces                    WorkspaceMember[]
+  authSessions                  AuthSession[]
+  teamMemberships               TeamMember[]
+  projectMemberships            ProjectMember[]
+  ledProjects                   Project[]                   @relation("ProjectLead")
+  assignedTasks                 Task[]                      @relation("AssignedTasks")
+  reportedTasks                 Task[]                      @relation("ReportedTasks")
+  createdAnnouncements          Announcement[]              @relation("AnnouncementCreator")
+  announcementRecipients        AnnouncementRecipient[]
+  ownedMeetings                 Meeting[]                   @relation("MeetingOwner")
+  createdMeetings               Meeting[]                   @relation("MeetingCreator")
+  meetingParticipants           MeetingParticipant[]
+  createdKnowledgeSpaces        KnowledgeSpace[]            @relation("KnowledgeSpaceCreator")
+  updatedKnowledgeSpaces        KnowledgeSpace[]            @relation("KnowledgeSpaceUpdater")
+  ownedKnowledgePages           KnowledgePage[]             @relation("KnowledgePageOwner")
+  createdKnowledgePages         KnowledgePage[]             @relation("KnowledgePageCreator")
+  updatedKnowledgePages         KnowledgePage[]             @relation("KnowledgePageUpdater")
+  verifiedKnowledgePages        KnowledgePage[]             @relation("KnowledgePageVerifier")
+  authoredKnowledgePageVersions KnowledgePageVersion[]
+  knowledgePageComments         KnowledgePageComment[]      @relation("KnowledgePageCommentAuthor")
+  resolvedKnowledgePageComments KnowledgePageComment[]      @relation("KnowledgePageCommentResolver")
+  knowledgePageSubscriptions    KnowledgePageSubscription[]
+  taskSubscriptions             TaskSubscription[]
+  comments                      TaskComment[]
+  notifications                 Notification[]
+  activityLogs                  ActivityLog[]
+  smsDeliveries                 SmsDelivery[]               @relation("SmsDeliveryRequester")
+  createdAgentRuns              AgentRun[]
+  approvedActions               AgentAction[]
+  sentInvites                   WorkspaceInvite[]           @relation("WorkspaceInviteInviter")
+  acceptedInvites               WorkspaceInvite[]           @relation("WorkspaceInviteAccepter")
 }
 
 model AuthSession {
-  id          String   @id @default(uuid()) @db.Uuid
-  userId      String   @db.Uuid
-  tokenHash   String   @unique
-  createdAt   DateTime @default(now())
-  lastUsedAt  DateTime @default(now())
-  expiresAt   DateTime
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  tokenHash  String   @unique
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+  expiresAt  DateTime
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -218,8 +255,8 @@ model WorkspaceInvite {
 
 model WorkspaceMember {
   id          String        @id @default(uuid()) @db.Uuid
-  workspaceId String       @db.Uuid
-  userId      String       @db.Uuid
+  workspaceId String        @db.Uuid
+  userId      String        @db.Uuid
   role        WorkspaceRole @default(MEMBER)
   createdAt   DateTime      @default(now())
 
@@ -232,17 +269,18 @@ model WorkspaceMember {
 
 model Team {
   id          String   @id @default(uuid()) @db.Uuid
-  workspaceId String  @db.Uuid
+  workspaceId String   @db.Uuid
   name        String
   slug        String
   description String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  members   TeamMember[]
-  projects  Project[]
-  meetings  Meeting[]
+  workspace       Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  members         TeamMember[]
+  projects        Project[]
+  meetings        Meeting[]
+  knowledgeSpaces KnowledgeSpace[]
 
   @@unique([workspaceId, slug])
 }
@@ -261,28 +299,29 @@ model TeamMember {
 }
 
 model Project {
-  id          String        @id @default(uuid()) @db.Uuid
-  workspaceId String       @db.Uuid
-  teamId      String?      @db.Uuid
-  parentId    String?      @db.Uuid
-  leadId      String?      @db.Uuid
-  name        String
-  keyPrefix   String
-  description String?
-  status      ProjectStatus @default(ACTIVE)
-  nextTaskNumber Int       @default(1)
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id             String        @id @default(uuid()) @db.Uuid
+  workspaceId    String        @db.Uuid
+  teamId         String?       @db.Uuid
+  parentId       String?       @db.Uuid
+  leadId         String?       @db.Uuid
+  name           String
+  keyPrefix      String
+  description    String?
+  status         ProjectStatus @default(ACTIVE)
+  nextTaskNumber Int           @default(1)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  team      Team?     @relation(fields: [teamId], references: [id], onDelete: SetNull)
-  parent    Project?  @relation("ProjectTree", fields: [parentId], references: [id], onDelete: SetNull)
-  subprojects Project[] @relation("ProjectTree")
-  lead      User?     @relation("ProjectLead", fields: [leadId], references: [id], onDelete: SetNull)
-  members   ProjectMember[]
-  tasks     Task[]
-  meetings  Meeting[]
-  cycles    Cycle[]
+  workspace          Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  team               Team?               @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  parent             Project?            @relation("ProjectTree", fields: [parentId], references: [id], onDelete: SetNull)
+  subprojects        Project[]           @relation("ProjectTree")
+  lead               User?               @relation("ProjectLead", fields: [leadId], references: [id], onDelete: SetNull)
+  members            ProjectMember[]
+  tasks              Task[]
+  meetings           Meeting[]
+  knowledgeSpaces    KnowledgeSpace[]
+  cycles             Cycle[]
   mattermostBindings MattermostBinding[]
 
   @@unique([workspaceId, keyPrefix])
@@ -291,8 +330,8 @@ model Project {
 
 model ProjectMember {
   id        String      @id @default(uuid()) @db.Uuid
-  projectId String     @db.Uuid
-  userId    String     @db.Uuid
+  projectId String      @db.Uuid
+  userId    String      @db.Uuid
   role      ProjectRole @default(MEMBER)
   createdAt DateTime    @default(now())
 
@@ -304,8 +343,8 @@ model ProjectMember {
 
 model Cycle {
   id          String   @id @default(uuid()) @db.Uuid
-  workspaceId String  @db.Uuid
-  projectId   String? @db.Uuid
+  workspaceId String   @db.Uuid
+  projectId   String?  @db.Uuid
   name        String
   startsAt    DateTime
   endsAt      DateTime
@@ -319,10 +358,10 @@ model Cycle {
 
 model Task {
   id          String       @id @default(uuid()) @db.Uuid
-  workspaceId String      @db.Uuid
-  projectId   String      @db.Uuid
-  cycleId     String?     @db.Uuid
-  parentId    String?     @db.Uuid
+  workspaceId String       @db.Uuid
+  projectId   String       @db.Uuid
+  cycleId     String?      @db.Uuid
+  parentId    String?      @db.Uuid
   key         String
   sequence    Int
   title       String
@@ -339,21 +378,21 @@ model Task {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  cycle     Cycle?    @relation(fields: [cycleId], references: [id], onDelete: SetNull)
-  parent    Task?     @relation("TaskTree", fields: [parentId], references: [id], onDelete: SetNull)
-  subtasks  Task[]    @relation("TaskTree")
-  assignee  User?     @relation("AssignedTasks", fields: [assigneeId], references: [id], onDelete: SetNull)
-  reporter  User?     @relation("ReportedTasks", fields: [reporterId], references: [id], onDelete: SetNull)
-  comments  TaskComment[]
-  attachments TaskAttachment[]
-  labels    TaskLabel[]
-  subscriptions TaskSubscription[]
-  meetingLinks MeetingTask[]
-  blockingDependencies TaskDependency[] @relation("TaskBlockedBy")
-  blockedTasks TaskDependency[] @relation("TaskBlocks")
-  notifications Notification[]
+  workspace            Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project              Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  cycle                Cycle?             @relation(fields: [cycleId], references: [id], onDelete: SetNull)
+  parent               Task?              @relation("TaskTree", fields: [parentId], references: [id], onDelete: SetNull)
+  subtasks             Task[]             @relation("TaskTree")
+  assignee             User?              @relation("AssignedTasks", fields: [assigneeId], references: [id], onDelete: SetNull)
+  reporter             User?              @relation("ReportedTasks", fields: [reporterId], references: [id], onDelete: SetNull)
+  comments             TaskComment[]
+  attachments          TaskAttachment[]
+  labels               TaskLabel[]
+  subscriptions        TaskSubscription[]
+  meetingLinks         MeetingTask[]
+  blockingDependencies TaskDependency[]   @relation("TaskBlockedBy")
+  blockedTasks         TaskDependency[]   @relation("TaskBlocks")
+  notifications        Notification[]
 
   @@unique([workspaceId, key])
   @@unique([projectId, sequence])
@@ -363,9 +402,9 @@ model Task {
 }
 
 model TaskDependency {
-  id              String @id @default(uuid()) @db.Uuid
-  taskId          String @db.Uuid
-  blockedByTaskId String @db.Uuid
+  id              String   @id @default(uuid()) @db.Uuid
+  taskId          String   @db.Uuid
+  blockedByTaskId String   @db.Uuid
   createdAt       DateTime @default(now())
 
   task          Task @relation("TaskBlockedBy", fields: [taskId], references: [id], onDelete: Cascade)
@@ -375,17 +414,17 @@ model TaskDependency {
 }
 
 model TaskComment {
-  id                String     @id @default(uuid()) @db.Uuid
-  taskId            String     @db.Uuid
-  authorId          String?    @db.Uuid
-  body              String
-  source            TaskSource @default(WEB)
-  mattermostPostId  String?
-  createdAt         DateTime   @default(now())
-  updatedAt         DateTime   @updatedAt
+  id               String     @id @default(uuid()) @db.Uuid
+  taskId           String     @db.Uuid
+  authorId         String?    @db.Uuid
+  body             String
+  source           TaskSource @default(WEB)
+  mattermostPostId String?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
 
-  task   Task  @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  author User? @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  task        Task             @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author      User?            @relation(fields: [authorId], references: [id], onDelete: SetNull)
   attachments TaskAttachment[]
 
   @@index([taskId, createdAt])
@@ -412,12 +451,12 @@ model TaskAttachment {
 
 model Label {
   id          String   @id @default(uuid()) @db.Uuid
-  workspaceId String  @db.Uuid
+  workspaceId String   @db.Uuid
   name        String
   color       String   @default("#64748b")
   createdAt   DateTime @default(now())
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   tasks     TaskLabel[]
 
   @@unique([workspaceId, name])
@@ -435,9 +474,9 @@ model TaskLabel {
 
 model TaskSubscription {
   id          String   @id @default(uuid()) @db.Uuid
-  workspaceId String  @db.Uuid
-  taskId      String  @db.Uuid
-  userId      String  @db.Uuid
+  workspaceId String   @db.Uuid
+  taskId      String   @db.Uuid
+  userId      String   @db.Uuid
   createdAt   DateTime @default(now())
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -451,11 +490,11 @@ model TaskSubscription {
 
 model View {
   id          String   @id @default(uuid()) @db.Uuid
-  workspaceId String  @db.Uuid
-  ownerId     String? @db.Uuid
+  workspaceId String   @db.Uuid
+  ownerId     String?  @db.Uuid
   name        String
   filters     Json
-  isShared    Boolean @default(false)
+  isShared    Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -464,18 +503,18 @@ model View {
 
 model Announcement {
   id          String             @id @default(uuid()) @db.Uuid
-  workspaceId String            @db.Uuid
-  creatorId   String?           @db.Uuid
+  workspaceId String             @db.Uuid
+  creatorId   String?            @db.Uuid
   title       String
   body        String?
   status      AnnouncementStatus @default(DRAFT)
   publishedAt DateTime?
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  creator   User?     @relation("AnnouncementCreator", fields: [creatorId], references: [id], onDelete: SetNull)
-  recipients AnnouncementRecipient[]
+  workspace     Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  creator       User?                   @relation("AnnouncementCreator", fields: [creatorId], references: [id], onDelete: SetNull)
+  recipients    AnnouncementRecipient[]
   notifications Notification[]
 
   @@index([workspaceId, status, publishedAt])
@@ -502,11 +541,11 @@ model AnnouncementRecipient {
 
 model Meeting {
   id          String        @id @default(uuid()) @db.Uuid
-  workspaceId String       @db.Uuid
-  teamId      String?      @db.Uuid
-  projectId   String?      @db.Uuid
-  ownerId     String?      @db.Uuid
-  createdById String?      @db.Uuid
+  workspaceId String        @db.Uuid
+  teamId      String?       @db.Uuid
+  projectId   String?       @db.Uuid
+  ownerId     String?       @db.Uuid
+  createdById String?       @db.Uuid
   title       String
   description String?
   status      MeetingStatus @default(PLANNED)
@@ -515,13 +554,13 @@ model Meeting {
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  team      Team?     @relation(fields: [teamId], references: [id], onDelete: SetNull)
-  project   Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  owner     User?     @relation("MeetingOwner", fields: [ownerId], references: [id], onDelete: SetNull)
-  createdBy User?     @relation("MeetingCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  participants MeetingParticipant[]
-  tasks     MeetingTask[]
+  workspace     Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  team          Team?                @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  project       Project?             @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  owner         User?                @relation("MeetingOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  createdBy     User?                @relation("MeetingCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  participants  MeetingParticipant[]
+  tasks         MeetingTask[]
   notifications Notification[]
 
   @@index([workspaceId, status, scheduledAt])
@@ -531,11 +570,11 @@ model Meeting {
 
 model MeetingParticipant {
   id          String                 @id @default(uuid()) @db.Uuid
-  workspaceId String                @db.Uuid
-  meetingId   String                @db.Uuid
-  userId      String                @db.Uuid
+  workspaceId String                 @db.Uuid
+  meetingId   String                 @db.Uuid
+  userId      String                 @db.Uuid
   role        MeetingParticipantRole @default(PARTICIPANT)
-  createdAt   DateTime              @default(now())
+  createdAt   DateTime               @default(now())
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   meeting   Meeting   @relation(fields: [meetingId], references: [id], onDelete: Cascade)
@@ -559,46 +598,239 @@ model MeetingTask {
   @@index([taskId])
 }
 
-model Notification {
+model KnowledgeSpace {
+  id          String             @id @default(uuid()) @db.Uuid
+  workspaceId String             @db.Uuid
+  type        KnowledgeSpaceType
+  teamId      String?            @db.Uuid
+  projectId   String?            @db.Uuid
+  key         String
+  name        String
+  description String?
+  icon        String?
+  createdById String?            @db.Uuid
+  updatedById String?            @db.Uuid
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  team      Team?           @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  project   Project?        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User?           @relation("KnowledgeSpaceCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy User?           @relation("KnowledgeSpaceUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  pages     KnowledgePage[]
+
+  @@unique([workspaceId, key])
+  @@unique([projectId])
+  @@index([workspaceId, type])
+  @@index([workspaceId, teamId])
+}
+
+model KnowledgePage {
+  id                    String              @id @default(uuid()) @db.Uuid
+  workspaceId           String              @db.Uuid
+  spaceId               String              @db.Uuid
+  parentId              String?             @db.Uuid
+  slug                  String
+  path                  String
+  title                 String
+  summary               String?
+  icon                  String?
+  content               Json
+  contentText           String
+  status                KnowledgePageStatus @default(DRAFT)
+  ownerId               String?             @db.Uuid
+  createdById           String?             @db.Uuid
+  updatedById           String?             @db.Uuid
+  verifiedById          String?             @db.Uuid
+  verifiedAt            DateTime?
+  verificationExpiresAt DateTime?
+  archivedAt            DateTime?
+  position              Int                 @default(0)
+  version               Int                 @default(1)
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  workspace     Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  space         KnowledgeSpace              @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  parent        KnowledgePage?              @relation("KnowledgePageTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children      KnowledgePage[]             @relation("KnowledgePageTree")
+  owner         User?                       @relation("KnowledgePageOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  createdBy     User?                       @relation("KnowledgePageCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy     User?                       @relation("KnowledgePageUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  verifiedBy    User?                       @relation("KnowledgePageVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+  versions      KnowledgePageVersion[]
+  comments      KnowledgePageComment[]
+  labels        KnowledgePageLabel[]
+  references    KnowledgePageReference[]
+  subscriptions KnowledgePageSubscription[]
+  attachments   KnowledgePageAttachment[]
+  notifications Notification[]
+
+  @@unique([spaceId, path])
+  @@index([workspaceId, status, updatedAt])
+  @@index([workspaceId, ownerId])
+  @@index([workspaceId, verificationExpiresAt])
+  @@index([spaceId, parentId, position])
+}
+
+model KnowledgePageVersion {
   id          String   @id @default(uuid()) @db.Uuid
-  workspaceId String  @db.Uuid
-  userId      String  @db.Uuid
-  taskId      String? @db.Uuid
-  announcementId String? @db.Uuid
-  meetingId   String? @db.Uuid
-  type        String
+  pageId      String   @db.Uuid
+  version     Int
   title       String
-  body        String?
-  deliveredAt DateTime?
-  readAt      DateTime?
+  content     Json
+  contentText String
+  authorId    String?  @db.Uuid
+  reason      String?
   createdAt   DateTime @default(now())
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  task      Task?     @relation(fields: [taskId], references: [id], onDelete: SetNull)
-  announcement Announcement? @relation(fields: [announcementId], references: [id], onDelete: SetNull)
-  meeting   Meeting?  @relation(fields: [meetingId], references: [id], onDelete: SetNull)
+  page   KnowledgePage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  author User?         @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@unique([pageId, version])
+  @@index([pageId, createdAt])
+}
+
+model KnowledgePageComment {
+  id           String    @id @default(uuid()) @db.Uuid
+  workspaceId  String    @db.Uuid
+  pageId       String    @db.Uuid
+  authorId     String?   @db.Uuid
+  body         String
+  anchor       Json?
+  resolvedAt   DateTime?
+  resolvedById String?   @db.Uuid
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  workspace   Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  page        KnowledgePage             @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  author      User?                     @relation("KnowledgePageCommentAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  resolvedBy  User?                     @relation("KnowledgePageCommentResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+  attachments KnowledgePageAttachment[]
+
+  @@index([workspaceId, pageId, createdAt])
+  @@index([authorId, createdAt])
+}
+
+model KnowledgePageSubscription {
+  id          String   @id @default(uuid()) @db.Uuid
+  workspaceId String   @db.Uuid
+  pageId      String   @db.Uuid
+  userId      String   @db.Uuid
+  createdAt   DateTime @default(now())
+
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  page      KnowledgePage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([pageId, userId])
+  @@index([workspaceId, userId, createdAt])
+}
+
+model KnowledgePageAttachment {
+  id         String   @id @default(uuid()) @db.Uuid
+  pageId     String   @db.Uuid
+  commentId  String?  @db.Uuid
+  name       String
+  documentId String?
+  object     String
+  mimeType   String?
+  sizeBytes  Int?
+  createdAt  DateTime @default(now())
+
+  page    KnowledgePage         @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  comment KnowledgePageComment? @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@index([pageId, createdAt])
+  @@index([commentId, createdAt])
+  @@index([object])
+}
+
+model KnowledgeLabel {
+  id          String   @id @default(uuid()) @db.Uuid
+  workspaceId String   @db.Uuid
+  name        String
+  color       String   @default("#64748b")
+  createdAt   DateTime @default(now())
+
+  workspace Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  pages     KnowledgePageLabel[]
+
+  @@unique([workspaceId, name])
+}
+
+model KnowledgePageLabel {
+  pageId  String @db.Uuid
+  labelId String @db.Uuid
+
+  page  KnowledgePage  @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  label KnowledgeLabel @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@id([pageId, labelId])
+}
+
+model KnowledgePageReference {
+  id          String                 @id @default(uuid()) @db.Uuid
+  workspaceId String                 @db.Uuid
+  pageId      String                 @db.Uuid
+  type        KnowledgeReferenceType
+  targetId    String?
+  url         String?
+  title       String?
+  createdAt   DateTime               @default(now())
+
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  page      KnowledgePage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, type, targetId])
+  @@index([pageId])
+}
+
+model Notification {
+  id              String    @id @default(uuid()) @db.Uuid
+  workspaceId     String    @db.Uuid
+  userId          String    @db.Uuid
+  taskId          String?   @db.Uuid
+  announcementId  String?   @db.Uuid
+  meetingId       String?   @db.Uuid
+  knowledgePageId String?   @db.Uuid
+  type            String
+  title           String
+  body            String?
+  deliveredAt     DateTime?
+  readAt          DateTime?
+  createdAt       DateTime  @default(now())
+
+  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  task          Task?          @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  announcement  Announcement?  @relation(fields: [announcementId], references: [id], onDelete: SetNull)
+  meeting       Meeting?       @relation(fields: [meetingId], references: [id], onDelete: SetNull)
+  knowledgePage KnowledgePage? @relation(fields: [knowledgePageId], references: [id], onDelete: SetNull)
 
   @@index([userId, readAt])
   @@index([userId, deliveredAt])
   @@index([userId, createdAt, id])
   @@index([announcementId])
   @@index([meetingId])
+  @@index([knowledgePageId])
 }
 
 model SmsDelivery {
-  id            String            @id @default(uuid()) @db.Uuid
-  workspaceId   String           @db.Uuid
-  requestedById String?          @db.Uuid
-  entityType    String
-  entityId      String
-  userId        String?          @db.Uuid
-  kind          String
-  status        SmsDeliveryStatus
-  receptor      String?
-  error         String?
+  id               String            @id @default(uuid()) @db.Uuid
+  workspaceId      String            @db.Uuid
+  requestedById    String?           @db.Uuid
+  entityType       String
+  entityId         String
+  userId           String?           @db.Uuid
+  kind             String
+  status           SmsDeliveryStatus
+  receptor         String?
+  error            String?
   providerEndpoint String?
-  createdAt     DateTime         @default(now())
+  createdAt        DateTime          @default(now())
 
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   requestedBy User?     @relation("SmsDeliveryRequester", fields: [requestedById], references: [id], onDelete: SetNull)
@@ -663,9 +895,9 @@ model ClientMutation {
 }
 
 model ActivityLog {
-  id          String    @id @default(uuid()) @db.Uuid
-  workspaceId String   @db.Uuid
-  actorId     String?  @db.Uuid
+  id          String     @id @default(uuid()) @db.Uuid
+  workspaceId String     @db.Uuid
+  actorId     String?    @db.Uuid
   actorType   ActorType
   entityType  String
   entityId    String
@@ -673,7 +905,7 @@ model ActivityLog {
   before      Json?
   after       Json?
   source      TaskSource @default(API)
-  createdAt   DateTime @default(now())
+  createdAt   DateTime   @default(now())
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   actor     User?     @relation(fields: [actorId], references: [id], onDelete: SetNull)
@@ -684,13 +916,13 @@ model ActivityLog {
 
 model IntegrationAccount {
   id          String              @id @default(uuid()) @db.Uuid
-  workspaceId String             @db.Uuid
+  workspaceId String              @db.Uuid
   provider    IntegrationProvider
   externalId  String?
   accessToken String?
   config      Json?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
@@ -699,10 +931,10 @@ model IntegrationAccount {
 
 model MattermostBinding {
   id          String   @id @default(uuid()) @db.Uuid
-  workspaceId String  @db.Uuid
+  workspaceId String   @db.Uuid
   channelId   String
   channelName String?
-  projectId   String  @db.Uuid
+  projectId   String   @db.Uuid
   createdAt   DateTime @default(now())
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -713,32 +945,32 @@ model MattermostBinding {
 
 model AgentRun {
   id          String         @id @default(uuid()) @db.Uuid
-  workspaceId String        @db.Uuid
+  workspaceId String         @db.Uuid
   kind        AgentRunKind
   status      AgentRunStatus @default(RUNNING)
   input       Json
   output      Json?
   error       String?
-  createdById String?       @db.Uuid
-  createdAt   DateTime      @default(now())
+  createdById String?        @db.Uuid
+  createdAt   DateTime       @default(now())
   completedAt DateTime?
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  createdBy User?      @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy User?         @relation(fields: [createdById], references: [id], onDelete: SetNull)
   actions   AgentAction[]
 
   @@index([workspaceId, kind, createdAt])
 }
 
 model AgentAction {
-  id          String            @id @default(uuid()) @db.Uuid
-  agentRunId  String            @db.Uuid
-  kind        String
-  payload     Json
-  status      AgentActionStatus @default(PROPOSED)
-  approverId  String?           @db.Uuid
-  decidedAt   DateTime?
-  createdAt   DateTime          @default(now())
+  id         String            @id @default(uuid()) @db.Uuid
+  agentRunId String            @db.Uuid
+  kind       String
+  payload    Json
+  status     AgentActionStatus @default(PROPOSED)
+  approverId String?           @db.Uuid
+  decidedAt  DateTime?
+  createdAt  DateTime          @default(now())
 
   agentRun AgentRun @relation(fields: [agentRunId], references: [id], onDelete: Cascade)
   approver User?    @relation(fields: [approverId], references: [id], onDelete: SetNull)

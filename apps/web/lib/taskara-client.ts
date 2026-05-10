@@ -1,4 +1,4 @@
-import type { TaskaraAttachment } from './taskara-types';
+import type { TaskaraAttachment, TaskaraKnowledgeAttachment } from './taskara-types';
 import { clearAuthSession, getAuthToken } from '@/store/auth-store';
 
 export interface UploadedMediaObject {
@@ -155,6 +155,21 @@ export function uploadMedia(file: File, name = file.name): Promise<UploadedMedia
    form.set('file', file, file.name);
 
    return taskaraRequest<UploadedMediaObject>('/uploads', {
+      method: 'POST',
+      body: form,
+   });
+}
+
+export function uploadKnowledgePageAttachment(
+   pageId: string,
+   file: File,
+   name = file.name
+): Promise<TaskaraKnowledgeAttachment> {
+   const form = new FormData();
+   form.set('name', name);
+   form.set('file', file, file.name);
+
+   return taskaraRequest<TaskaraKnowledgeAttachment>(`/knowledge/pages/${encodeURIComponent(pageId)}/attachments`, {
       method: 'POST',
       body: form,
    });

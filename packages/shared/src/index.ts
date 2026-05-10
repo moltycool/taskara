@@ -44,6 +44,9 @@ export const workspaceRoles = ['OWNER', 'ADMIN', 'MEMBER', 'GUEST', 'AGENT'] as 
 export const announcementStatuses = ['DRAFT', 'PUBLISHED', 'ARCHIVED'] as const;
 export const meetingStatuses = ['PLANNED', 'HELD', 'CANCELED', 'ARCHIVED'] as const;
 export const meetingParticipantRoles = ['OWNER', 'PARTICIPANT'] as const;
+export const knowledgeSpaceTypes = ['WORKSPACE', 'TEAM', 'PROJECT'] as const;
+export const knowledgePageStatuses = ['DRAFT', 'PUBLISHED', 'ARCHIVED'] as const;
+export const knowledgeReferenceTypes = ['PAGE', 'TASK', 'PROJECT', 'MEETING', 'ANNOUNCEMENT', 'EXTERNAL_URL'] as const;
 
 export type TaskStatusValue = (typeof taskStatuses)[number];
 export type TaskPriorityValue = (typeof taskPriorities)[number];
@@ -51,6 +54,9 @@ export type WorkspaceRoleValue = (typeof workspaceRoles)[number];
 export type AnnouncementStatusValue = (typeof announcementStatuses)[number];
 export type MeetingStatusValue = (typeof meetingStatuses)[number];
 export type MeetingParticipantRoleValue = (typeof meetingParticipantRoles)[number];
+export type KnowledgeSpaceTypeValue = (typeof knowledgeSpaceTypes)[number];
+export type KnowledgePageStatusValue = (typeof knowledgePageStatuses)[number];
+export type KnowledgeReferenceTypeValue = (typeof knowledgeReferenceTypes)[number];
 export type TaskViewLayoutValue = (typeof taskViewLayouts)[number];
 export type TaskViewGroupingValue = (typeof taskViewGroupings)[number];
 export type TaskViewOrderingValue = (typeof taskViewOrderings)[number];
@@ -72,6 +78,9 @@ export const workspaceRoleSchema = z.enum(workspaceRoles);
 export const announcementStatusSchema = z.enum(announcementStatuses);
 export const meetingStatusSchema = z.enum(meetingStatuses);
 export const meetingParticipantRoleSchema = z.enum(meetingParticipantRoles);
+export const knowledgeSpaceTypeSchema = z.enum(knowledgeSpaceTypes);
+export const knowledgePageStatusSchema = z.enum(knowledgePageStatuses);
+export const knowledgeReferenceTypeSchema = z.enum(knowledgeReferenceTypes);
 export const taskViewLayoutSchema = z.enum(taskViewLayouts);
 export const taskViewGroupingSchema = z.enum(taskViewGroupings);
 export const taskViewOrderingSchema = z.enum(taskViewOrderings);
@@ -306,6 +315,87 @@ export const createMeetingTasksSchema = z.object({
     dueAt: z.string().datetime().optional(),
     labels: z.array(z.string().min(1).max(40)).max(12).default([])
   })).min(1).max(50)
+});
+
+const knowledgeContentSchema = z.unknown();
+
+export const createKnowledgeSpaceSchema = z.object({
+  type: knowledgeSpaceTypeSchema.default('WORKSPACE'),
+  key: z.string().trim().toLowerCase().min(2).max(80).regex(/^[a-z0-9][a-z0-9-]*$/).optional(),
+  name: z.string().trim().min(1).max(160),
+  description: z.string().trim().max(5000).optional(),
+  icon: z.string().trim().max(80).optional(),
+  teamId: z.string().uuid().optional(),
+  projectId: z.string().uuid().optional()
+});
+
+export const updateKnowledgeSpaceSchema = z.object({
+  key: z.string().trim().toLowerCase().min(2).max(80).regex(/^[a-z0-9][a-z0-9-]*$/).optional(),
+  name: z.string().trim().min(1).max(160).optional(),
+  description: z.string().trim().max(5000).nullable().optional(),
+  icon: z.string().trim().max(80).nullable().optional()
+});
+
+export const createKnowledgePageSchema = z.object({
+  spaceId: z.string().uuid(),
+  parentId: z.string().uuid().optional(),
+  slug: z.string().trim().toLowerCase().min(1).max(120).regex(/^[a-z0-9][a-z0-9-]*$/).optional(),
+  title: z.string().trim().min(1).max(300),
+  summary: z.string().trim().max(1000).optional(),
+  icon: z.string().trim().max(80).optional(),
+  content: knowledgeContentSchema.optional(),
+  status: knowledgePageStatusSchema.default('PUBLISHED'),
+  ownerId: z.string().uuid().optional(),
+  labels: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
+  position: z.coerce.number().int().min(0).max(100000).default(0)
+});
+
+export const updateKnowledgePageSchema = z.object({
+  title: z.string().trim().min(1).max(300).optional(),
+  slug: z.string().trim().toLowerCase().min(1).max(120).regex(/^[a-z0-9][a-z0-9-]*$/).optional(),
+  parentId: z.string().uuid().nullable().optional(),
+  summary: z.string().trim().max(1000).nullable().optional(),
+  icon: z.string().trim().max(80).nullable().optional(),
+  content: knowledgeContentSchema.optional(),
+  status: knowledgePageStatusSchema.optional(),
+  ownerId: z.string().uuid().nullable().optional(),
+  labels: z.array(z.string().trim().min(1).max(80)).max(20).optional(),
+  position: z.coerce.number().int().min(0).max(100000).optional(),
+  baseVersion: z.coerce.number().int().min(1).optional()
+});
+
+export const knowledgePageListQuerySchema = z.object({
+  spaceId: z.string().uuid().optional(),
+  parentId: z.string().uuid().nullable().optional(),
+  q: z.string().trim().max(200).optional(),
+  ownerId: z.string().uuid().optional(),
+  label: z.string().trim().max(80).optional(),
+  status: knowledgePageStatusSchema.optional(),
+  verified: z.coerce.boolean().optional(),
+  expired: z.coerce.boolean().optional(),
+  mine: z.coerce.boolean().optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0)
+});
+
+export const knowledgeSearchQuerySchema = z.object({
+  q: z.string().trim().min(1).max(200),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  offset: z.coerce.number().int().min(0).default(0)
+});
+
+export const verifyKnowledgePageSchema = z.object({
+  expiresAt: z.string().datetime().nullable().optional()
+});
+
+export const createKnowledgeCommentSchema = z.object({
+  body: z.string().trim().min(1).max(15000),
+  anchor: z.unknown().optional()
+});
+
+export const updateKnowledgeCommentSchema = z.object({
+  body: z.string().trim().min(1).max(15000).optional(),
+  resolved: z.boolean().optional()
 });
 
 export const taskViewStateSchema = z.object({

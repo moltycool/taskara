@@ -14,10 +14,12 @@ import {
    SignalMedium,
    UserRound,
 } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { fa } from '@/lib/fa-copy';
 import { markCachedAvatarImageFailed, useCachedAvatarImage } from '@/lib/avatar-cache';
 import { getProjectColorsFromName, getUserColorsFromName } from '@/lib/name-colors';
+import { fromSelectValue, toSelectValue } from '@/lib/select-utils';
 
 type IconType = ComponentType<{ className?: string }>;
 
@@ -291,26 +293,33 @@ export function LinearPill({
 export function LinearSelectPill({
    value,
    onChange,
-   children,
+   options,
    ariaLabel,
 }: {
    value: string;
    onChange: (value: string) => void;
-   children: ReactNode;
+   options: Array<{ value: string; label: ReactNode }>;
    ariaLabel: string;
 }) {
    return (
-      <label className="relative inline-flex">
+      <div className="relative inline-flex">
          <span className="sr-only">{ariaLabel}</span>
-         <select
-            aria-label={ariaLabel}
-            className="h-7 cursor-pointer appearance-none rounded-full border border-white/8 bg-[#2a2a2d] py-0 ps-7 pe-3 text-xs font-medium text-zinc-300 outline-none transition hover:bg-[#303033] focus:ring-2 focus:ring-indigo-400/35"
-            value={value}
-            onChange={(event) => onChange(event.target.value)}
-         >
-            {children}
-         </select>
-      </label>
+         <Select value={toSelectValue(value)} onValueChange={(nextValue) => onChange(fromSelectValue(nextValue))}>
+            <SelectTrigger
+               aria-label={ariaLabel}
+               className="h-7 min-w-28 rounded-full border-white/8 bg-[#2a2a2d] py-0 ps-3 pe-2 text-xs font-medium text-zinc-300 shadow-[inset_0_1px_0_rgb(255_255_255/0.04)] hover:bg-[#303033]"
+            >
+               <SelectValue placeholder={ariaLabel} />
+            </SelectTrigger>
+            <SelectContent className="rounded-xl border-white/10 bg-[#202023] text-zinc-100">
+               {options.map((option) => (
+                  <SelectItem key={toSelectValue(option.value)} value={toSelectValue(option.value)}>
+                     {option.label}
+                  </SelectItem>
+               ))}
+            </SelectContent>
+         </Select>
+      </div>
    );
 }
 

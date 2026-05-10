@@ -2,9 +2,9 @@
 
 import type { FormEvent } from 'react';
 import { useCallback, useEffect, useMemo, useState, useTransition } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ChevronDown, Plus } from 'lucide-react';
+import { BookOpen, ChevronDown, Loader2, Plus } from 'lucide-react';
 import {
    Dialog,
    DialogContent,
@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import {
    LinearEmptyState,
@@ -25,8 +26,9 @@ import {
 } from '@/components/taskara/linear-ui';
 import { fa } from '@/lib/fa-copy';
 import { taskaraRequest } from '@/lib/taskara-client';
-import type { TaskaraProject, TaskaraTeam } from '@/lib/taskara-types';
+import type { TaskaraKnowledgeSpace, TaskaraProject, TaskaraTeam } from '@/lib/taskara-types';
 import { cn } from '@/lib/utils';
+import { EMPTY_SELECT_VALUE, fromSelectValue, toSelectValue } from '@/lib/select-utils';
 
 const initialProjectForm = {
    name: '',
@@ -36,15 +38,19 @@ const initialProjectForm = {
 };
 
 export function ProjectsView() {
-   const { teamId } = useParams();
+   const navigate = useNavigate();
+   const { orgId, teamId } = useParams();
+   const workspaceSlug = orgId || 'taskara';
    const activeTeamSlug = teamId && teamId !== 'all' ? teamId : null;
    const [projects, setProjects] = useState<TaskaraProject[]>([]);
    const [teams, setTeams] = useState<TaskaraTeam[]>([]);
+   const [knowledgeSpaces, setKnowledgeSpaces] = useState<TaskaraKnowledgeSpace[]>([]);
    const [form, setForm] = useState(initialProjectForm);
    const [modalOpen, setModalOpen] = useState(false);
    const [filter, setFilter] = useState<'all' | 'active'>('all');
    const [error, setError] = useState('');
    const [loading, setLoading] = useState(true);
+   const [creatingDocsProjectId, setCreatingDocsProjectId] = useState<string | null>(null);
    const [isPending, startTransition] = useTransition();
    const activeTeam = useMemo(
       () => (activeTeamSlug ? teams.find((team) => team.slug === activeTeamSlug) || null : null),
@@ -54,12 +60,14 @@ export function ProjectsView() {
    const load = useCallback(async () => {
       setError('');
       try {
-         const [projectData, teamData] = await Promise.all([
+         const [projectData, teamData, knowledgeSpaceData] = await Promise.all([
             taskaraRequest<TaskaraProject[]>('/projects'),
             taskaraRequest<TaskaraTeam[]>('/teams'),
+            taskaraRequest<TaskaraKnowledgeSpace[]>('/knowledge/spaces').catch(() => []),
          ]);
          setProjects(projectData);
          setTeams(teamData);
+         setKnowledgeSpaces(knowledgeSpaceData);
          const activeTeam = activeTeamSlug ? teamData.find((team) => team.slug === activeTeamSlug) : null;
          setForm((current) => ({
             ...current,
@@ -143,6 +151,33 @@ export function ProjectsView() {
       }
    }
 
+   async function createProjectDocs(project: TaskaraProject) {
+      const existing = knowledgeSpaces.find((space) => space.projectId === project.id);
+      if (existing) {
+         navigate(`/${workspaceSlug}/wiki/${existing.key}`);
+         return;
+      }
+
+      setCreatingDocsProjectId(project.id);
+      try {
+         const created = await taskaraRequest<TaskaraKnowledgeSpace>('/knowledge/spaces', {
+            method: 'POST',
+            body: JSON.stringify({
+               type: 'PROJECT',
+               projectId: project.id,
+               name: `${project.name} ${fa.project.docs}`,
+            }),
+         });
+         setKnowledgeSpaces((items) => [created, ...items.filter((item) => item.id !== created.id)]);
+         toast.success(fa.project.docsCreated);
+         navigate(`/${workspaceSlug}/wiki/${created.key}`);
+      } catch (err) {
+         toast.error(err instanceof Error ? err.message : fa.project.docsCreateFailed);
+      } finally {
+         setCreatingDocsProjectId(null);
+      }
+   }
+
    return (
       <div className="h-full bg-[#101011]" data-testid="projects-screen">
          {error ? (
@@ -186,8 +221,12 @@ export function ProjectsView() {
                      <ProjectRow
                         key={project.id}
                         activeTeamId={activeTeam?.id || null}
+                        creatingDocs={creatingDocsProjectId === project.id}
+                        orgId={workspaceSlug}
                         project={project}
+                        projectSpace={knowledgeSpaces.find((space) => space.projectId === project.id) || null}
                         teams={teams}
+                        onCreateDocs={(item) => void createProjectDocs(item)}
                         onTeamChange={(teamId) => void updateProjectTeam(project, teamId)}
                      />
                   ))}
@@ -244,16 +283,13 @@ export function ProjectsView() {
                         </LinearPill>
                         <LinearSelectPill
                            ariaLabel={fa.project.team}
+                           options={[
+                              { value: '', label: fa.app.unset },
+                              ...teams.map((team) => ({ value: team.id, label: team.name })),
+                           ]}
                            value={form.teamId}
                            onChange={(teamId) => setForm((current) => ({ ...current, teamId }))}
-                        >
-                           <option value="">{fa.app.unset}</option>
-                           {teams.map((team) => (
-                              <option key={team.id} value={team.id}>
-                                 {team.name}
-                              </option>
-                           ))}
-                        </LinearSelectPill>
+                        />
                      </div>
                      <Textarea
                         className="min-h-44 resize-none border-none bg-transparent px-0 text-sm leading-6 text-zinc-300 shadow-none placeholder:text-zinc-600 focus-visible:ring-0"
@@ -288,13 +324,21 @@ export function ProjectsView() {
 
 function ProjectRow({
    activeTeamId,
+   creatingDocs,
+   orgId,
    project,
+   projectSpace,
    teams,
+   onCreateDocs,
    onTeamChange,
 }: {
    activeTeamId: string | null;
+   creatingDocs: boolean;
+   orgId: string;
    project: TaskaraProject;
+   projectSpace: TaskaraKnowledgeSpace | null;
    teams: TaskaraTeam[];
+   onCreateDocs: (project: TaskaraProject) => void;
    onTeamChange: (teamId: string) => void;
 }) {
    const statusMeta = linearProjectStatusMeta[project.status] || linearProjectStatusMeta.ACTIVE;
@@ -320,23 +364,45 @@ function ProjectRow({
             ) : null}
          </div>
          <div className="flex items-center gap-4 text-xs text-zinc-500">
+            {projectSpace ? (
+               <Link
+                  className="hidden h-8 items-center gap-1.5 rounded-md border border-white/8 bg-white/[0.03] px-2 text-xs text-zinc-300 transition hover:bg-white/[0.07] hover:text-zinc-100 sm:inline-flex"
+                  to={`/${orgId}/wiki/${projectSpace.key}`}
+               >
+                  <BookOpen className="size-3.5" />
+                  {fa.project.docs}
+               </Link>
+            ) : (
+               <button
+                  className="hidden h-8 items-center gap-1.5 rounded-md border border-white/8 bg-white/[0.03] px-2 text-xs text-zinc-300 transition hover:bg-white/[0.07] hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 sm:inline-flex"
+                  disabled={creatingDocs}
+                  type="button"
+                  onClick={() => onCreateDocs(project)}
+               >
+                  {creatingDocs ? <Loader2 className="size-3.5 animate-spin" /> : <BookOpen className="size-3.5" />}
+                  {fa.project.createDocs}
+               </button>
+            )}
             <span className="hidden items-center gap-1 md:flex">
                <ProjectStatusIcon status={project.status} />
                {statusMeta.label}
             </span>
-            <select
-               aria-label={fa.project.team}
-               className="hidden h-8 rounded-md border border-white/8 bg-white/[0.03] px-2 text-xs text-zinc-300 outline-none hover:bg-white/[0.06] lg:inline"
-               value={currentTeamId}
-               onChange={(event) => onTeamChange(event.target.value)}
-            >
-               <option value="">{fa.app.unset}</option>
-               {teams.map((team) => (
-                  <option key={team.id} value={team.id}>
-                     {team.name}
-                  </option>
-               ))}
-            </select>
+            <Select value={toSelectValue(currentTeamId)} onValueChange={(value) => onTeamChange(fromSelectValue(value))}>
+               <SelectTrigger
+                  aria-label={fa.project.team}
+                  className="hidden h-8 w-36 rounded-md border-white/8 bg-white/[0.03] px-2 text-xs text-zinc-300 hover:bg-white/[0.06] lg:flex"
+               >
+                  <SelectValue />
+               </SelectTrigger>
+               <SelectContent className="rounded-lg border-white/10 bg-[#202023] text-zinc-100">
+                  <SelectItem value={EMPTY_SELECT_VALUE}>{fa.app.unset}</SelectItem>
+                  {teams.map((team) => (
+                     <SelectItem key={team.id} value={team.id}>
+                        {team.name}
+                     </SelectItem>
+                  ))}
+               </SelectContent>
+            </Select>
             <span>{(project._count?.tasks || 0).toLocaleString('fa-IR')} {fa.project.issueCount}</span>
          </div>
       </article>

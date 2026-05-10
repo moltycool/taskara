@@ -13,6 +13,7 @@ import {
    DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { LinearAvatar } from '@/components/taskara/linear-ui';
 import { taskaraRequest } from '@/lib/taskara-client';
@@ -322,18 +323,22 @@ export function MembersView() {
                      </label>
                      <label className="grid gap-2 text-sm text-zinc-300">
                         <span className="font-medium">{fa.settings.role}</span>
-                        <select
-                           className={cn(selectClassName, 'h-9 rounded-md')}
+                        <Select
                            disabled={creating || inviteCreated}
                            value={inviteForm.role}
-                           onChange={(event) => setInviteForm((current) => ({ ...current, role: event.target.value }))}
+                           onValueChange={(role) => setInviteForm((current) => ({ ...current, role }))}
                         >
-                           {roleOptions.map((role) => (
-                              <option key={role} value={role}>
-                                 {fa.role[role]}
-                              </option>
-                           ))}
-                        </select>
+                           <SelectTrigger className={cn(selectClassName, 'h-9 rounded-md')}>
+                              <SelectValue />
+                           </SelectTrigger>
+                           <SelectContent className="border-white/10 bg-[#202023] text-zinc-100">
+                              {roleOptions.map((role) => (
+                                 <SelectItem key={role} value={role}>
+                                    {fa.role[role]}
+                                 </SelectItem>
+                              ))}
+                           </SelectContent>
+                        </Select>
                      </label>
 
                      {createdInviteUrl ? (

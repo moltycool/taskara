@@ -231,6 +231,175 @@ input[type='search'] {
    font-size: 16px !important;
 }
 
+/* Light-mode compatibility for legacy dark-only utility classes.
+   Keep these scoped away from `.dark` so the established dark theme stays unchanged. */
+:root:not(.dark) [class~="bg-[#050506]"],
+:root:not(.dark) [class~="bg-[#070708]"],
+:root:not(.dark) [class~="bg-[#080809]"],
+:root:not(.dark) [class~="bg-[#09090a]"] {
+   background-color: var(--background) !important;
+}
+
+:root:not(.dark) [class~="bg-[#101011]"] {
+   background-color: var(--container) !important;
+}
+
+:root:not(.dark) [class~="bg-[#111113]"],
+:root:not(.dark) [class~="bg-[#141416]"],
+:root:not(.dark) [class~="bg-[#151517]"],
+:root:not(.dark) [class~="bg-[#171719]"],
+:root:not(.dark) [class~="bg-[#17171a]"],
+:root:not(.dark) [class~="bg-[#18181a]"],
+:root:not(.dark) [class~="bg-[#19191b]"] {
+   background-color: var(--card) !important;
+}
+
+:root:not(.dark) [class~="bg-[#1b1b1d]"],
+:root:not(.dark) [class~="bg-[#1d1d20]"],
+:root:not(.dark) [class~="bg-[#1e1e21]"],
+:root:not(.dark) [class~="bg-[#1f1f22]"],
+:root:not(.dark) [class~="bg-[#202023]"],
+:root:not(.dark) [class~="bg-[#202024]"] {
+   background-color: var(--popover) !important;
+}
+
+:root:not(.dark) [class~="bg-[#252529]"],
+:root:not(.dark) [class~="bg-[#2a2a2d]"],
+:root:not(.dark) [class~="bg-[#2b2b2e]"],
+:root:not(.dark) [class~="bg-[#303033]"],
+:root:not(.dark) [class~="bg-[#333336]"] {
+   background-color: var(--muted) !important;
+}
+
+:root:not(.dark) [class~="bg-[#6a6a70]"] {
+   background-color: oklch(0.871 0.006 286.286) !important;
+}
+
+:root:not(.dark) [class~="hover:bg-[#1d1d20]"]:hover,
+:root:not(.dark) [class~="hover:bg-[#252529]"]:hover,
+:root:not(.dark) [class~="hover:bg-[#303033]"]:hover,
+:root:not(.dark) [class~="hover:bg-[#333336]"]:hover {
+   background-color: var(--accent) !important;
+}
+
+:root:not(.dark) [class~="border-white/6"],
+:root:not(.dark) [class~="border-white/7"],
+:root:not(.dark) [class~="border-white/8"],
+:root:not(.dark) [class~="border-white/[0.06]"],
+:root:not(.dark) [class~="border-white/[0.07]"],
+:root:not(.dark) [class~="border-white/[0.08]"] {
+   border-color: rgb(24 24 27 / 0.08) !important;
+}
+
+:root:not(.dark) [class~="border-white/10"],
+:root:not(.dark) [class~="border-white/12"],
+:root:not(.dark) [class~="border-white/14"],
+:root:not(.dark) [class~="border-white/[0.10]"],
+:root:not(.dark) [class~="border-white/[0.12]"],
+:root:not(.dark) [class~="border-white/[0.14]"] {
+   border-color: rgb(24 24 27 / 0.12) !important;
+}
+
+:root:not(.dark) [class~="border-white/20"],
+:root:not(.dark) [class~="border-white/[0.20]"] {
+   border-color: rgb(24 24 27 / 0.2) !important;
+}
+
+:root:not(.dark) [class~="border-zinc-400"] {
+   border-color: oklch(0.871 0.006 286.286) !important;
+}
+
+:root:not(.dark) [class~="bg-white/[0.015]"],
+:root:not(.dark) [class~="bg-white/[0.02]"],
+:root:not(.dark) [class~="bg-white/[0.025]"],
+:root:not(.dark) [class~="bg-white/[0.03]"],
+:root:not(.dark) [class~="bg-white/[0.035]"],
+:root:not(.dark) [class~="bg-white/[0.04]"],
+:root:not(.dark) [class~="bg-white/[0.045]"],
+:root:not(.dark) [class~="bg-white/[0.05]"],
+:root:not(.dark) [class~="bg-white/[0.055]"],
+:root:not(.dark) [class~="bg-white/[0.06]"],
+:root:not(.dark) [class~="bg-white/[0.07]"],
+:root:not(.dark) [class~="bg-white/[0.075]"],
+:root:not(.dark) [class~="bg-white/[0.08]"],
+:root:not(.dark) [class~="bg-white/5"],
+:root:not(.dark) [class~="bg-white/6"],
+:root:not(.dark) [class~="bg-white/7"],
+:root:not(.dark) [class~="bg-white/8"],
+:root:not(.dark) [class~="bg-white/10"],
+:root:not(.dark) [class~="bg-white/12"],
+:root:not(.dark) [class~="bg-white/14"],
+:root:not(.dark) [class~="bg-white/15"] {
+   background-color: rgb(24 24 27 / 0.055) !important;
+}
+
+:root:not(.dark) [class~="hover:bg-white/[0.018]"]:hover,
+:root:not(.dark) [class~="hover:bg-white/[0.025]"]:hover,
+:root:not(.dark) [class~="hover:bg-white/[0.028]"]:hover,
+:root:not(.dark) [class~="hover:bg-white/[0.035]"]:hover,
+:root:not(.dark) [class~="hover:bg-white/[0.04]"]:hover,
+:root:not(.dark) [class~="hover:bg-white/[0.045]"]:hover,
+:root:not(.dark) [class~="hover:bg-white/[0.05]"]:hover,
+:root:not(.dark) [class~="hover:bg-white/[0.055]"]:hover,
+:root:not(.dark) [class~="hover:bg-white/[0.06]"]:hover,
+:root:not(.dark) [class~="hover:bg-white/[0.07]"]:hover,
+:root:not(.dark) [class~="hover:bg-white/[0.08]"]:hover,
+:root:not(.dark) [class~="hover:bg-white/5"]:hover,
+:root:not(.dark) [class~="hover:bg-white/6"]:hover,
+:root:not(.dark) [class~="hover:bg-white/8"]:hover,
+:root:not(.dark) [class~="hover:bg-white/10"]:hover,
+:root:not(.dark) [class~="hover:bg-white/12"]:hover,
+:root:not(.dark) [class~="hover:bg-white/15"]:hover,
+:root:not(.dark) [class~="focus:bg-white/[0.07]"]:focus,
+:root:not(.dark) [class~="focus:bg-white/[0.08]"]:focus,
+:root:not(.dark) [class~="data-[selected=true]:bg-white/[0.07]"][data-selected="true"],
+:root:not(.dark) [class~="data-[state=open]:bg-white/[0.07]"][data-state="open"] {
+   background-color: var(--accent) !important;
+}
+
+:root:not(.dark) [class~="bg-zinc-400"],
+:root:not(.dark) [class~="bg-zinc-500"],
+:root:not(.dark) [class~="bg-zinc-600"],
+:root:not(.dark) [class~="bg-zinc-700"] {
+   background-color: oklch(0.871 0.006 286.286) !important;
+}
+
+:root:not(.dark) [class~="text-zinc-50"],
+:root:not(.dark) [class~="text-zinc-100"],
+:root:not(.dark) [class~="text-zinc-200"] {
+   color: var(--foreground) !important;
+}
+
+:root:not(.dark) [class~="text-zinc-300"] {
+   color: oklch(0.274 0.006 286.033) !important;
+}
+
+:root:not(.dark) [class~="text-zinc-400"] {
+   color: oklch(0.442 0.017 285.786) !important;
+}
+
+:root:not(.dark) [class~="text-zinc-500"],
+:root:not(.dark) [class~="text-zinc-600"],
+:root:not(.dark) [class~="text-zinc-700"] {
+   color: var(--muted-foreground) !important;
+}
+
+:root:not(.dark) [class~="hover:text-zinc-100"]:hover,
+:root:not(.dark) [class~="hover:text-zinc-200"]:hover,
+:root:not(.dark) [class~="hover:text-zinc-300"]:hover,
+:root:not(.dark) [class~="focus:text-zinc-100"]:focus,
+:root:not(.dark) [class~="focus-visible:text-zinc-100"]:focus-visible,
+:root:not(.dark) [class~="data-[state=open]:text-zinc-100"][data-state="open"],
+:root:not(.dark) .group[data-selected="true"] [class~="group-data-[selected=true]:text-zinc-100"] {
+   color: var(--foreground) !important;
+}
+
+:root:not(.dark) [class~="placeholder:text-zinc-500"]::placeholder,
+:root:not(.dark) [class~="placeholder:text-zinc-600"]::placeholder,
+:root:not(.dark) [class~="placeholder:text-zinc-700"]::placeholder {
+   color: oklch(0.705 0.015 286.067) !important;
+}
+
 .taskara-jalali-calendar {
    direction: rtl;
    border: 1px solid rgb(255 255 255 / 0.10);
@@ -333,6 +502,63 @@ input[type='search'] {
    height: 24px;
    margin: 0 auto;
    border-radius: 8px;
+}
+
+:root:not(.dark) .taskara-jalali-calendar {
+   border-color: rgb(24 24 27 / 0.12);
+   background: #ffffff;
+   color: #3f3f46;
+   box-shadow: 0 20px 70px rgb(24 24 27 / 0.14);
+}
+
+:root:not(.dark) .rmdp-ep-arrow.taskara-jalali-calendar::after {
+   border-color: rgb(24 24 27 / 0.12);
+   background: #ffffff;
+}
+
+:root:not(.dark) .taskara-jalali-calendar .rmdp-header,
+:root:not(.dark) .taskara-jalali-calendar .rmdp-calendar,
+:root:not(.dark) .taskara-jalali-calendar .rmdp-month-picker,
+:root:not(.dark) .taskara-jalali-calendar .rmdp-year-picker,
+:root:not(.dark) .taskara-jalali-calendar .rmdp-time-picker {
+   background: #ffffff;
+   color: #3f3f46;
+}
+
+:root:not(.dark) .taskara-jalali-calendar .rmdp-header-values,
+:root:not(.dark) .taskara-jalali-calendar .rmdp-week-day,
+:root:not(.dark) .taskara-jalali-calendar .rmdp-day:not(.rmdp-deactive) {
+   color: #3f3f46;
+}
+
+:root:not(.dark) .taskara-jalali-calendar .rmdp-day.rmdp-deactive,
+:root:not(.dark) .taskara-jalali-calendar .rmdp-time-picker .dvdr {
+   color: #a1a1aa;
+}
+
+:root:not(.dark) .taskara-jalali-calendar .rmdp-day.rmdp-today span,
+:root:not(.dark) .taskara-jalali-calendar .rmdp-arrow-container:hover {
+   background: rgb(24 24 27 / 0.06);
+   color: #18181b;
+}
+
+:root:not(.dark) .taskara-jalali-calendar .rmdp-day.rmdp-selected span,
+:root:not(.dark) .taskara-jalali-calendar .rmdp-day:not(.rmdp-disabled):not(.rmdp-day-hidden) span:hover {
+   background: #6f72e8;
+   color: #ffffff;
+}
+
+:root:not(.dark) .taskara-jalali-calendar .rmdp-arrow {
+   border-color: #71717a;
+}
+
+:root:not(.dark) .taskara-jalali-calendar .rmdp-time-picker {
+   border-top-color: rgb(24 24 27 / 0.08);
+}
+
+:root:not(.dark) .taskara-jalali-calendar .rmdp-time-picker div input {
+   background: #f4f4f5;
+   color: #18181b;
 }
 
 @font-face {

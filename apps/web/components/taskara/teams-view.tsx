@@ -5,6 +5,7 @@ import { Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { taskaraRequest } from '@/lib/taskara-client';
@@ -12,6 +13,7 @@ import { formatJalaliDateTime } from '@/lib/jalali';
 import { RoleBadge, workspaceRoles } from '@/lib/taskara-presenters';
 import type { PaginatedResponse, TaskaraMe, TaskaraTeam, TaskaraTeamMember, TaskaraUser } from '@/lib/taskara-types';
 import { fa } from '@/lib/fa-copy';
+import { EMPTY_SELECT_VALUE, fromSelectValue, toSelectValue } from '@/lib/select-utils';
 
 const initialTeamForm = {
    name: '',
@@ -213,49 +215,65 @@ export function TeamsView() {
                   <CardContent className="space-y-4">
                      <label className="grid gap-2 text-sm">
                         <span>{fa.table.team}</span>
-                        <select
-                           className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                           value={selectedTeamId}
-                           onChange={(event) => setSelectedTeamId(event.target.value)}
-                        >
-                           {teams.map((team) => (
-                              <option key={team.id} value={team.id}>
-                                 {team.name}
-                              </option>
-                           ))}
-                        </select>
+                        <Select value={toSelectValue(selectedTeamId)} onValueChange={(value) => setSelectedTeamId(fromSelectValue(value))}>
+                           <SelectTrigger className="h-9 w-full">
+                              <SelectValue placeholder={fa.table.team} />
+                           </SelectTrigger>
+                           <SelectContent>
+                              {teams.length === 0 ? (
+                                 <SelectItem disabled value={EMPTY_SELECT_VALUE}>
+                                    تیمی وجود ندارد
+                                 </SelectItem>
+                              ) : null}
+                              {teams.map((team) => (
+                                 <SelectItem key={team.id} value={team.id}>
+                                    {team.name}
+                                 </SelectItem>
+                              ))}
+                           </SelectContent>
+                        </Select>
                      </label>
 
                      {isWorkspaceAdmin ? (
                         <form className="space-y-4" onSubmit={handleAddMember}>
                            <label className="grid gap-2 text-sm">
                               <span>{fa.table.user}</span>
-                              <select
-                                 className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                                 value={memberForm.userId}
-                                 onChange={(event) => setMemberForm((current) => ({ ...current, userId: event.target.value }))}
+                              <Select
+                                 value={toSelectValue(memberForm.userId)}
+                                 onValueChange={(value) =>
+                                    setMemberForm((current) => ({ ...current, userId: fromSelectValue(value) }))
+                                 }
                               >
-                                 <option value="">انتخاب کاربر</option>
-                                 {availableUsers.map((user) => (
-                                    <option key={user.id} value={user.id}>
-                                       {user.name} - {user.email}
-                                    </option>
-                                 ))}
-                              </select>
+                                 <SelectTrigger className="h-9 w-full">
+                                    <SelectValue placeholder="انتخاب کاربر" />
+                                 </SelectTrigger>
+                                 <SelectContent>
+                                    <SelectItem value={EMPTY_SELECT_VALUE}>انتخاب کاربر</SelectItem>
+                                    {availableUsers.map((user) => (
+                                       <SelectItem key={user.id} value={user.id}>
+                                          {user.name} - {user.email}
+                                       </SelectItem>
+                                    ))}
+                                 </SelectContent>
+                              </Select>
                            </label>
                            <label className="grid gap-2 text-sm">
                               <span>{fa.settings.role}</span>
-                              <select
-                                 className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                              <Select
                                  value={memberForm.role}
-                                 onChange={(event) => setMemberForm((current) => ({ ...current, role: event.target.value }))}
+                                 onValueChange={(role) => setMemberForm((current) => ({ ...current, role }))}
                               >
-                                 {workspaceRoles.map((role) => (
-                                    <option key={role} value={role}>
-                                       {fa.role[role]}
-                                    </option>
-                                 ))}
-                              </select>
+                                 <SelectTrigger className="h-9 w-full">
+                                    <SelectValue />
+                                 </SelectTrigger>
+                                 <SelectContent>
+                                    {workspaceRoles.map((role) => (
+                                       <SelectItem key={role} value={role}>
+                                          {fa.role[role]}
+                                       </SelectItem>
+                                    ))}
+                                 </SelectContent>
+                              </Select>
                            </label>
                            <Button className="w-full" disabled={!selectedTeam || !memberForm.userId}>
                               افزودن عضو
@@ -354,17 +372,21 @@ export function TeamsView() {
                                     </TableCell>
                                     <TableCell>
                                        {isWorkspaceAdmin ? (
-                                          <select
-                                             className="flex h-9 w-full min-w-28 rounded-md border border-input bg-background px-3 text-sm"
+                                          <Select
                                              value={member.role}
-                                             onChange={(event) => void handleTeamRoleChange(member.userId, event.target.value)}
+                                             onValueChange={(role) => void handleTeamRoleChange(member.userId, role)}
                                           >
-                                             {workspaceRoles.map((role) => (
-                                                <option key={role} value={role}>
-                                                   {fa.role[role]}
-                                                </option>
-                                             ))}
-                                          </select>
+                                             <SelectTrigger className="h-9 w-full min-w-28">
+                                                <SelectValue />
+                                             </SelectTrigger>
+                                             <SelectContent>
+                                                {workspaceRoles.map((role) => (
+                                                   <SelectItem key={role} value={role}>
+                                                      {fa.role[role]}
+                                                   </SelectItem>
+                                                ))}
+                                             </SelectContent>
+                                          </Select>
                                        ) : (
                                           <RoleBadge role={member.role} />
                                        )}

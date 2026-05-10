@@ -1,19 +1,56 @@
 import { app, BrowserWindow, Tray, ipcMain, nativeImage, shell, screen } from 'electron';
 import dotenv from 'dotenv';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = path.resolve(__dirname, '../../..');
-dotenv.config({ path: path.join(workspaceRoot, '.env') });
+const appDataPath = (() => {
+  try {
+    return app.getPath('appData');
+  } catch {
+    return null;
+  }
+})();
+
+const userDataEnvPath = (() => {
+  try {
+    return path.join(app.getPath('userData'), '.env');
+  } catch {
+    return null;
+  }
+})();
+
+const legacyProductEnvPath = appDataPath ? path.join(appDataPath, 'Taskara Menubar', '.env') : null;
+const scopedPackageEnvPath = appDataPath ? path.join(appDataPath, '@taskara', 'menubar', '.env') : null;
+
+const envPaths = [
+  process.env.TASKARA_ENV_PATH,
+  userDataEnvPath,
+  legacyProductEnvPath,
+  scopedPackageEnvPath,
+  path.join(workspaceRoot, '.env'),
+  path.join(process.cwd(), '.env'),
+  process.resourcesPath ? path.join(process.resourcesPath, '.env') : null
+].filter((value) => typeof value === 'string' && value.length > 0);
+
+for (const envPath of envPaths) {
+  if (!fs.existsSync(envPath)) continue;
+  dotenv.config({ path: envPath, override: false });
+  break;
+}
 
 const apiUrl = (process.env.TASKARA_API_URL || 'http://localhost:4000').replace(/\/$/, '');
-const workspaceSlug = process.env.TASKARA_WORKSPACE_SLUG?.trim();
-const userEmail = process.env.TASKARA_USER_EMAIL?.trim().toLowerCase();
+const authToken = process.env.TASKARA_AUTH_TOKEN?.trim();
+let workspaceSlug = process.env.TASKARA_WORKSPACE_SLUG?.trim();
 const webUrl = (process.env.TASKARA_WEB_URL || process.env.WEB_ORIGIN || 'http://localhost:3005').replace(/\/$/, '');
 const refreshMs = Number(process.env.TASKARA_MENUBAR_REFRESH_MS || '60000');
 
-const iconPath = path.resolve(workspaceRoot, 'apps/web/public/images/icon.png');
+const iconPaths = [
+  path.join(__dirname, 'icon.png'),
+  path.resolve(workspaceRoot, 'apps/web/public/images/icon.png')
+];
 const fallbackTrayIconDataUrl =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAACTSURBVHgBpZKBCYAgEEV/TeAIjuIIbdQIuUGt0CS1gW1iZ2jIVaTnhw+Cvs8/OYDJA4Y8kR3ZR2/kmazxJbpUEfQ/Dm/UG7wVwHkjlQdMFfDdJMFaACebnjJGyDWgcnZu1/lrCrl6NCoEHJBrDwEr5NrT6ko/UV8xdLAC2N49mlc5CylpYh8wCwqrvbBGLoKGvz8Bfq0QPWEUo/EAAAAASUVORK5CYII=';
 
@@ -29,14 +66,56 @@ let lastSnapshot = {
   lastError: null
 };
 let isRefreshing = false;
+let actorBootstrapPromise = null;
 
 function authHeaders() {
   return {
     'content-type': 'application/json',
-    ...(userEmail ? { 'x-user-email': userEmail } : {}),
+    ...(authToken ? { authorization: `Bearer ${authToken}` } : {}),
     ...(workspaceSlug ? { 'x-workspace-slug': workspaceSlug } : {}),
     'x-actor-type': 'CODEX'
   };
+}
+
+async function bootstrapActorContext() {
+  if (!authToken) return;
+  if (workspaceSlug) return;
+  if (actorBootstrapPromise) {
+    await actorBootstrapPromise;
+    return;
+  }
+
+  actorBootstrapPromise = (async () => {
+    const response = await fetch(`${apiUrl}/workspaces`, {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${authToken}`,
+        'content-type': 'application/json'
+      }
+    });
+
+    const text = await response.text();
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = null;
+    }
+
+    if (!response.ok) {
+      throw new Error(data?.message || `${response.status} ${response.statusText}`);
+    }
+
+    const items = Array.isArray(data?.items) ? data.items : [];
+    const first = items.find((item) => typeof item?.workspace?.slug === 'string');
+    if (first?.workspace?.slug) workspaceSlug = first.workspace.slug;
+  })();
+
+  try {
+    await actorBootstrapPromise;
+  } finally {
+    actorBootstrapPromise = null;
+  }
 }
 
 async function request(pathname, options = {}) {
@@ -80,10 +159,30 @@ async function patchTask(taskKey, patch) {
 }
 
 async function refreshTasks(force = false) {
-  if (!workspaceSlug || !userEmail) {
+  if (!authToken) {
     lastSnapshot = {
       ...lastSnapshot,
-      lastError: 'TASKARA_WORKSPACE_SLUG یا TASKARA_USER_EMAIL در فایل .env تنظیم نشده است'
+      lastError: 'TASKARA_AUTH_TOKEN در فایل .env تنظیم نشده است'
+    };
+    updateTrayView();
+    return lastSnapshot;
+  }
+
+  try {
+    await bootstrapActorContext();
+  } catch (error) {
+    lastSnapshot = {
+      ...lastSnapshot,
+      lastError: error instanceof Error ? error.message : 'Failed to load workspace from web session'
+    };
+    updateTrayView();
+    return lastSnapshot;
+  }
+
+  if (!workspaceSlug) {
+    lastSnapshot = {
+      ...lastSnapshot,
+      lastError: 'هیچ workspace فعالی برای توکن فعلی پیدا نشد'
     };
     updateTrayView();
     return lastSnapshot;
@@ -113,7 +212,11 @@ async function refreshTasks(force = false) {
 }
 
 function trayIcon() {
-  let icon = nativeImage.createFromPath(iconPath);
+  let icon = nativeImage.createEmpty();
+  for (const iconPath of iconPaths) {
+    if (!icon.isEmpty()) break;
+    icon = nativeImage.createFromPath(iconPath);
+  }
   if (!icon.isEmpty()) icon = icon.resize({ width: 18, height: 18, quality: 'best' });
   if (icon.isEmpty()) icon = nativeImage.createFromDataURL(fallbackTrayIconDataUrl);
   if (process.platform === 'darwin' && !icon.isEmpty()) icon.setTemplateImage(true);
@@ -224,12 +327,27 @@ ipcMain.handle('taskara:update-task', async (_event, taskKey, patch) => {
 });
 
 ipcMain.handle('taskara:open-task', async (_event, taskKey) => {
+  if (!workspaceSlug) {
+    try {
+      await bootstrapActorContext();
+    } catch {
+      // Ignore bootstrap failures here; fallback URL below.
+    }
+  }
   const key = encodeURIComponent(String(taskKey || '').trim());
   if (!key) return;
-  await shell.openExternal(`${webUrl}/${workspaceSlug}/team/all/all?task=${key}`);
+  const basePath = workspaceSlug ? `/${workspaceSlug}/team/all/all` : '';
+  await shell.openExternal(`${webUrl}${basePath}${basePath ? `?task=${key}` : ''}`);
 });
 
 ipcMain.handle('taskara:open-web', async () => {
+  if (!workspaceSlug) {
+    try {
+      await bootstrapActorContext();
+    } catch {
+      // Ignore bootstrap failures here; fallback URL below.
+    }
+  }
   const basePath = workspaceSlug ? `/${workspaceSlug}/team/all/all` : '';
   await shell.openExternal(`${webUrl}${basePath}`);
 });

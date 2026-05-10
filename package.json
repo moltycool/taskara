@@ -13,6 +13,8 @@
     "dev:api": "bun run --filter @taskara/api dev",
     "dev:web": "bun run --filter @taskara/web dev",
     "dev:menubar": "bun run --filter @taskara/menubar dev",
+    "build:menubar": "bun run --filter @taskara/menubar build",
+    "release:menubar": "bun run --filter @taskara/menubar release",
     "dev:mattermost": "bun run --filter @taskara/mattermost-bot dev",
     "db:generate": "PRISMA_GENERATE_SKIP_AUTOINSTALL=1 bun prisma generate --schema packages/db/prisma/schema.prisma",
     "db:migrate": "bun prisma migrate dev --schema packages/db/prisma/schema.prisma",

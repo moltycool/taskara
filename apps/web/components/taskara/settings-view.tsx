@@ -87,6 +87,7 @@ const selectClassName =
    'flex h-9 w-full rounded-md border border-white/10 bg-[#111113] px-3 text-sm text-zinc-200 outline-none transition focus:border-indigo-400/50 focus:ring-2 focus:ring-indigo-400/25 disabled:cursor-not-allowed disabled:opacity-55';
 const aiModelOptions = ['x-ai/grok-4.1-fast', 'deepseek/deepseek-v4-flash'] as const;
 const defaultAiModel = aiModelOptions[0];
+const menubarReleasesUrl = 'https://github.com/moltycool/taskara/releases';
 
 function isSettingsSection(value?: string): value is SettingsSection {
    return settingsSections.includes(value as SettingsSection);
@@ -499,6 +500,21 @@ function ProfileSettingsPage() {
                </SettingsField>
             </SettingsPanel>
 
+            <SettingsPanel title="اپ منوبار">
+               <div className="space-y-3 px-4 py-4 text-sm text-zinc-300">
+                  <p className="text-zinc-400">
+                     نسخه macOS اپ منوبار را از صفحه ریلیز دانلود کنید.
+                  </p>
+                  <Button asChild className="w-full border border-white/10 bg-zinc-100 text-zinc-950 hover:bg-white">
+                     <a href={menubarReleasesUrl} target="_blank" rel="noreferrer">
+                        <Download className="size-4" />
+                        دانلود اپ منوبار
+                        <ExternalLink className="size-4" />
+                     </a>
+                  </Button>
+               </div>
+            </SettingsPanel>
+
             <SettingsPanel title="Raycast">
                <SettingsField
                   label="پروژه پیش‌فرض"
@@ -891,26 +907,6 @@ function AppearanceSettingsPage() {
                </div>
             </SettingsField>
 
-            <SettingsField label="اندازه تیترها" description="از ۸۵٪ تا ۱۴۵٪">
-               <div className="flex items-center gap-3">
-                  <input
-                     className="h-2 w-full cursor-pointer appearance-none rounded-full bg-white/10 accent-[var(--primary)]"
-                     max={145}
-                     min={85}
-                     step={1}
-                     type="range"
-                     value={Math.round(settings.titleFontScale * 100)}
-                     onChange={(event) =>
-                        setSettings({
-                           titleFontScale: Number(event.target.value) / 100,
-                        })
-                     }
-                  />
-                  <span className="min-w-[52px] text-left text-xs text-zinc-400">
-                     {Math.round(settings.titleFontScale * 100)}%
-                  </span>
-               </div>
-            </SettingsField>
          </SettingsPanel>
       </div>
    );

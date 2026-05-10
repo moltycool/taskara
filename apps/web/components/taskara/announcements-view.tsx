@@ -23,6 +23,7 @@ import { dispatchWorkspaceRefresh, useLiveRefresh } from '@/lib/live-refresh';
 import { taskaraRequest } from '@/lib/taskara-client';
 import type { AnnouncementsResponse, PaginatedResponse, SmsSendSummary, TaskaraAnnouncement, TaskaraUser } from '@/lib/taskara-types';
 import { fa } from '@/lib/fa-copy';
+import { useAuthSession } from '@/store/auth-store';
 import { cn } from '@/lib/utils';
 
 const emptyForm = {
@@ -34,6 +35,8 @@ const emptyForm = {
 export function AnnouncementsView() {
    const navigate = useNavigate();
    const { orgId, announcementId } = useParams();
+   const { session } = useAuthSession();
+   const currentUserId = session?.user.id || null;
    const [announcements, setAnnouncements] = useState<TaskaraAnnouncement[]>([]);
    const [users, setUsers] = useState<TaskaraUser[]>([]);
    const [selected, setSelected] = useState<TaskaraAnnouncement | null>(null);
@@ -47,6 +50,9 @@ export function AnnouncementsView() {
    const [draftRecipientIds, setDraftRecipientIds] = useState<string[]>([]);
    const [publishSubmitting, setPublishSubmitting] = useState(false);
    const [smsSending, setSmsSending] = useState(false);
+   const selectedRecipient = announcementRecipientForUser(selected, currentUserId);
+   const selectedIsRead = Boolean(selectedRecipient?.readAt);
+   const selectedCanMarkRead = Boolean(selectedRecipient && !selectedRecipient.readAt);
 
    const load = useCallback(async () => {
       setError('');
@@ -120,7 +126,7 @@ export function AnnouncementsView() {
    }
 
    async function markRead() {
-      if (!selected) return;
+      if (!selected || !selectedCanMarkRead) return;
       try {
          const updated = await taskaraRequest<TaskaraAnnouncement>(`/announcements/${encodeURIComponent(selected.id)}/read`, {
             method: 'PATCH',
@@ -204,7 +210,7 @@ export function AnnouncementsView() {
                         >
                            <span className="relative mt-0.5 inline-flex size-7 items-center justify-center rounded-full bg-white/[0.055] text-zinc-400">
                               <Bell className="size-4" />
-                              {announcement.recipients?.some((recipient) => !recipient.readAt) ? <span className="absolute -top-0.5 -start-0.5 size-2 rounded-full bg-indigo-400 ring-2 ring-[#101011]" /> : null}
+                              {isAnnouncementUnreadForUser(announcement, currentUserId) ? <span className="absolute -top-0.5 -start-0.5 size-2 rounded-full bg-indigo-400 ring-2 ring-[#101011]" /> : null}
                            </span>
                            <span className="min-w-0">
                               <span className="mb-1 block truncate text-sm font-medium text-zinc-200">{announcement.title}</span>
@@ -241,9 +247,15 @@ export function AnnouncementsView() {
                            </Button>
                         ) : (
                            <>
-                              <Button size="sm" variant="ghost" className="h-8 gap-2 rounded-full text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100" onClick={() => void markRead()}>
+                              <Button
+                                 size="sm"
+                                 variant="ghost"
+                                 className="h-8 gap-2 rounded-full text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100 disabled:text-zinc-600"
+                                 disabled={!selectedCanMarkRead}
+                                 onClick={() => void markRead()}
+                              >
                                  <Check className="size-4" />
-                                 {fa.announcement.markRead}
+                                 {selectedIsRead ? fa.announcement.read : fa.announcement.markRead}
                               </Button>
                               <Button size="sm" variant="ghost" className="h-8 gap-2 rounded-full text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100" disabled={smsSending} onClick={() => void sendSms()}>
                                  {smsSending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
@@ -439,6 +451,16 @@ function statusLabel(status: string): string {
    if (status === 'PUBLISHED') return fa.announcement.published;
    if (status === 'ARCHIVED') return fa.announcement.archived;
    return fa.announcement.draft;
+}
+
+function announcementRecipientForUser(announcement: TaskaraAnnouncement | null | undefined, userId: string | null) {
+   if (!announcement || !userId) return undefined;
+   return announcement.recipients?.find((recipient) => recipient.userId === userId);
+}
+
+function isAnnouncementUnreadForUser(announcement: TaskaraAnnouncement, userId: string | null): boolean {
+   const recipient = announcementRecipientForUser(announcement, userId);
+   return Boolean(recipient && !recipient.readAt);
 }
 
 function summaryText(template: string, summary: SmsSendSummary): string {

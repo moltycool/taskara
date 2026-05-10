@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { CalendarDays, CheckSquare, Loader2, Plus, Send, Users, X } from 'lucide-react';
+import { CalendarDays, Loader2, Plus, Send, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -17,18 +17,19 @@ import {
 import { Input } from '@/components/ui/input';
 import { DescriptionEditor } from '@/components/taskara/description-editor';
 import { LazyJalaliDatePicker } from '@/components/taskara/lazy-jalali-date-picker';
-import { LinearAvatar, ProjectGlyph } from '@/components/taskara/linear-ui';
+import { LinearAvatar } from '@/components/taskara/linear-ui';
 import { UserMultiSelectCombobox } from '@/components/taskara/user-multi-select-combobox';
 import { formatJalaliDateTime } from '@/lib/jalali';
 import { dispatchWorkspaceRefresh, useLiveRefresh } from '@/lib/live-refresh';
 import { taskaraRequest } from '@/lib/taskara-client';
-import type { PaginatedResponse, SmsSendSummary, TaskaraMeeting, TaskaraProject, TaskaraTask, TaskaraUser } from '@/lib/taskara-types';
+import type { PaginatedResponse, SmsSendSummary, TaskaraMeeting, TaskaraProject, TaskaraUser } from '@/lib/taskara-types';
 import { fa } from '@/lib/fa-copy';
 import { cn } from '@/lib/utils';
 
 const emptyMeetingForm = {
    title: '',
    description: '',
+   projectId: '',
    ownerId: '',
    participantIds: [] as string[],
    scheduledAt: '',
@@ -38,8 +39,8 @@ export function MeetingsView() {
    const navigate = useNavigate();
    const { orgId, meetingId } = useParams();
    const [meetings, setMeetings] = useState<TaskaraMeeting[]>([]);
-   const [users, setUsers] = useState<TaskaraUser[]>([]);
    const [projects, setProjects] = useState<TaskaraProject[]>([]);
+   const [users, setUsers] = useState<TaskaraUser[]>([]);
    const [selected, setSelected] = useState<TaskaraMeeting | null>(null);
    const [loading, setLoading] = useState(true);
    const [detailsLoading, setDetailsLoading] = useState(false);
@@ -48,22 +49,18 @@ export function MeetingsView() {
    const [form, setForm] = useState(emptyMeetingForm);
    const [submitting, setSubmitting] = useState(false);
    const [smsSending, setSmsSending] = useState(false);
-   const [actionTitle, setActionTitle] = useState('');
-   const [actionProjectId, setActionProjectId] = useState('');
-   const [actionAssigneeId, setActionAssigneeId] = useState('');
-   const [actionSubmitting, setActionSubmitting] = useState(false);
 
    const load = useCallback(async () => {
       setError('');
       try {
-         const [meetingResult, userResult, projectResult] = await Promise.all([
+         const [meetingResult, projectResult, userResult] = await Promise.all([
             taskaraRequest<PaginatedResponse<TaskaraMeeting>>('/meetings?limit=100'),
-            taskaraRequest<PaginatedResponse<TaskaraUser>>('/users?limit=200'),
             taskaraRequest<TaskaraProject[]>('/projects'),
+            taskaraRequest<PaginatedResponse<TaskaraUser>>('/users?limit=200'),
          ]);
          setMeetings(meetingResult.items);
-         setUsers(userResult.items);
          setProjects(projectResult);
+         setUsers(userResult.items);
       } catch (err) {
          setError(err instanceof Error ? err.message : fa.meeting.loadFailed);
       } finally {
@@ -90,7 +87,6 @@ export function MeetingsView() {
             const result = await taskaraRequest<TaskaraMeeting>(`/meetings/${encodeURIComponent(meetingId)}`);
             if (!canceled) {
                setSelected(result);
-               setActionProjectId((current) => current || result.project?.id || projects[0]?.id || '');
             }
          } catch (err) {
             if (!canceled) setError(err instanceof Error ? err.message : fa.meeting.loadFailed);
@@ -102,11 +98,7 @@ export function MeetingsView() {
       return () => {
          canceled = true;
       };
-   }, [meetingId, projects]);
-
-   useEffect(() => {
-      setActionProjectId((current) => current || selected?.project?.id || projects[0]?.id || '');
-   }, [projects, selected?.project?.id]);
+   }, [meetingId]);
 
    async function createNewMeeting() {
       if (!form.title.trim()) return;
@@ -117,6 +109,7 @@ export function MeetingsView() {
             body: JSON.stringify({
                title: form.title,
                description: form.description || undefined,
+               projectId: form.projectId || undefined,
                ownerId: form.ownerId || undefined,
                participantIds: form.participantIds,
                scheduledAt: form.scheduledAt || undefined,
@@ -131,35 +124,6 @@ export function MeetingsView() {
          toast.error(err instanceof Error ? err.message : fa.meeting.createFailed);
       } finally {
          setSubmitting(false);
-      }
-   }
-
-   async function createActionTask() {
-      if (!selected || !actionTitle.trim() || !actionProjectId) return;
-      setActionSubmitting(true);
-      try {
-         await taskaraRequest<PaginatedResponse<TaskaraTask>>(`/meetings/${encodeURIComponent(selected.id)}/tasks`, {
-            method: 'POST',
-            body: JSON.stringify({
-               projectId: actionProjectId,
-               tasks: [
-                  {
-                     title: actionTitle,
-                     assigneeId: actionAssigneeId || undefined,
-                  },
-               ],
-            }),
-         });
-         setActionTitle('');
-         setActionAssigneeId('');
-         const refreshed = await taskaraRequest<TaskaraMeeting>(`/meetings/${encodeURIComponent(selected.id)}`);
-         setSelected(refreshed);
-         await load();
-         dispatchWorkspaceRefresh({ source: 'meeting:tasks' });
-      } catch (err) {
-         toast.error(err instanceof Error ? err.message : fa.meeting.taskCreateFailed);
-      } finally {
-         setActionSubmitting(false);
       }
    }
 
@@ -226,7 +190,7 @@ export function MeetingsView() {
          <main className="min-h-0 overflow-y-auto">
             {selected ? (
                <div className="mx-auto flex min-h-full w-full max-w-[880px] flex-col px-5 py-5 lg:px-8">
-                  <div className="mb-8 flex items-center justify-between gap-3">
+                  <div className="mb-8 flex items-center justify-between gap-3 xl:hidden">
                      <div className="flex min-w-0 items-center gap-2 text-sm text-zinc-500">
                         <span>{meetingStatusLabel(selected.status)}</span>
                         <span className="h-1 w-1 rounded-full bg-zinc-700" />
@@ -243,46 +207,6 @@ export function MeetingsView() {
                   <section className="mb-8 min-h-[140px] border-b border-white/8 pb-8">
                      {descriptionText(selected.description) ? <p className="whitespace-pre-wrap text-sm leading-7 text-zinc-300">{descriptionText(selected.description)}</p> : <p className="text-sm text-zinc-600">{fa.meeting.descriptionPlaceholder}</p>}
                   </section>
-
-                  <section className="mb-8">
-                     <h3 className="mb-3 text-base font-semibold text-zinc-100">{fa.meeting.createTasks}</h3>
-                     <div className="grid gap-2 rounded-lg border border-white/8 bg-[#18181a] p-3 md:grid-cols-[minmax(0,1fr)_180px_180px_auto]">
-                        <Input className="h-9 border-white/10 bg-white/[0.03]" placeholder={fa.meeting.actionTitlePlaceholder} value={actionTitle} onChange={(event) => setActionTitle(event.target.value)} />
-                        <select className="h-9 rounded-md border border-white/10 bg-[#202023] px-2 text-sm text-zinc-200 outline-none" value={actionProjectId} onChange={(event) => setActionProjectId(event.target.value)}>
-                           <option value="">{fa.issue.project}</option>
-                           {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-                        </select>
-                        <select className="h-9 rounded-md border border-white/10 bg-[#202023] px-2 text-sm text-zinc-200 outline-none" value={actionAssigneeId} onChange={(event) => setActionAssigneeId(event.target.value)}>
-                           <option value="">{fa.issue.noAssignee}</option>
-                           {users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
-                        </select>
-                        <Button className="h-9" disabled={actionSubmitting || !actionTitle.trim() || !actionProjectId} onClick={() => void createActionTask()}>
-                           {actionSubmitting ? <Loader2 className="size-4 animate-spin" /> : <CheckSquare className="size-4" />}
-                           {fa.app.create}
-                        </Button>
-                     </div>
-                  </section>
-
-                  <section>
-                     <h3 className="mb-3 text-base font-semibold text-zinc-100">{fa.meeting.actionItems}</h3>
-                     {(selected.tasks || []).length ? (
-                        <div className="space-y-2">
-                           {(selected.tasks || []).map((link) => (
-                              <div key={`${link.meetingId}-${link.taskId}`} className="flex items-center justify-between gap-3 rounded-lg border border-white/8 bg-white/[0.025] px-3 py-2">
-                                 <span className="min-w-0">
-                                    <span className="ltr me-2 text-xs text-zinc-500">{link.task.key}</span>
-                                    <span className="text-sm text-zinc-200">{link.task.title}</span>
-                                 </span>
-                                 <Button size="sm" variant="ghost" className="h-7 text-xs text-zinc-500" onClick={() => navigate(`/${orgId || 'taskara'}/issue/${encodeURIComponent(link.task.key)}`)}>
-                                    {fa.nav.issues}
-                                 </Button>
-                              </div>
-                           ))}
-                        </div>
-                     ) : (
-                        <EmptyState>{fa.app.empty}</EmptyState>
-                     )}
-                  </section>
                </div>
             ) : (
                <div className="flex h-full items-center justify-center px-6 text-center text-sm text-zinc-500">{fa.meeting.selectMeeting}</div>
@@ -291,6 +215,26 @@ export function MeetingsView() {
 
          <aside className="hidden min-h-0 overflow-y-auto border-s border-white/8 p-3 xl:block">
             <div className="space-y-3">
+               <Panel title={fa.meeting.status}>
+                  <div className="flex min-w-0 items-center gap-2 text-sm text-zinc-300">
+                     <span>{selected ? meetingStatusLabel(selected.status) : fa.app.unset}</span>
+                     <span className="h-1 w-1 rounded-full bg-zinc-700" />
+                     <span>{selected ? formatJalaliDateTime(selected.scheduledAt || selected.heldAt || selected.createdAt) : fa.app.unset}</span>
+                     {detailsLoading ? <Loader2 className="size-4 animate-spin text-zinc-500" /> : null}
+                  </div>
+               </Panel>
+               <Panel title={fa.meeting.sendSms}>
+                  <Button
+                     size="sm"
+                     variant="ghost"
+                     className="h-8 w-full gap-2 rounded-full text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100"
+                     disabled={!selected || smsSending}
+                     onClick={() => void sendSms()}
+                  >
+                     {smsSending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+                     {fa.meeting.sendSms}
+                  </Button>
+               </Panel>
                <Panel title={fa.meeting.participants}>
                   {(selected?.participants || []).map((participant) => (
                      <div key={participant.id} className="flex min-w-0 items-center justify-between gap-3">
@@ -301,12 +245,6 @@ export function MeetingsView() {
                         <span className="shrink-0 text-[11px] text-zinc-500">{participant.role === 'OWNER' ? fa.meeting.owner : ''}</span>
                      </div>
                   ))}
-               </Panel>
-               <Panel title={fa.meeting.project}>
-                  <div className="flex min-w-0 items-center gap-2 text-sm text-zinc-300">
-                     <ProjectGlyph name={selected?.project?.name} className="size-5 rounded" iconClassName="size-3.5" />
-                     <span className="truncate">{selected?.project?.name || fa.app.unset}</span>
-                  </div>
                </Panel>
             </div>
          </aside>
@@ -365,6 +303,18 @@ export function MeetingsView() {
                         placeholder={fa.meeting.descriptionPlaceholder}
                      />
                      <div className="mt-auto flex flex-wrap items-center gap-1.5 pb-4">
+                        <label className="relative inline-flex h-6 max-w-[196px] shrink-0">
+                           <span className="sr-only">{fa.meeting.project}</span>
+                           <select
+                              aria-label={fa.meeting.project}
+                              className="h-6 min-w-0 cursor-pointer appearance-none rounded-full border border-white/8 bg-[#2a2a2d] py-0 px-2.5 text-[12px] font-normal text-zinc-300 shadow-[inset_0_1px_0_rgb(255_255_255/0.04)] outline-none transition hover:bg-[#303033] focus:ring-2 focus:ring-indigo-400/35"
+                              value={form.projectId}
+                              onChange={(event) => setForm((current) => ({ ...current, projectId: event.target.value }))}
+                           >
+                              <option value="">{fa.meeting.project}</option>
+                              {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+                           </select>
+                        </label>
                         <label className="relative inline-flex h-6 max-w-[196px] shrink-0">
                            <span className="sr-only">{fa.meeting.owner}</span>
                            <span className="pointer-events-none absolute start-2 top-1/2 z-10 flex -translate-y-1/2 items-center">

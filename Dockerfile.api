@@ -15,7 +15,7 @@ COPY packages/db/package.json packages/db/package.json
 COPY packages/shared/package.json packages/shared/package.json
 COPY plugins/taskara-agent/package.json plugins/taskara-agent/package.json
 
-RUN bun install --frozen-lockfile --filter @taskara/api
+RUN bun install --filter @taskara/api
 
 FROM deps AS runtime
 

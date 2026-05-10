@@ -113,7 +113,7 @@ import type {
    TaskaraUser,
    TaskaraView,
 } from '@/lib/taskara-types';
-import { taskPriorities, taskStatuses } from '@/lib/taskara-presenters';
+import { taskPriorities, taskStatuses, taskWeights } from '@/lib/taskara-presenters';
 import { cn } from '@/lib/utils';
 import { getProjectColorsFromName, getUserColorsFromName } from '@/lib/name-colors';
 
@@ -162,6 +162,46 @@ type GroupDescriptor = {
    offset: number;
 };
 
+const taskDragMimeType = 'application/x-taskara-task-id';
+
+function getDraggedTaskId(event: DragEvent<HTMLElement>) {
+   return event.dataTransfer.getData(taskDragMimeType) || event.dataTransfer.getData('text/plain');
+}
+
+function canStartTaskDrag(event: DragEvent<HTMLElement>) {
+   if (!(event.target instanceof HTMLElement)) return false;
+   return !Boolean(
+      event.target.closest(
+         'button, input, textarea, select, a, [contenteditable="true"], [data-taskara-no-drag="true"]'
+      )
+   );
+}
+
+function getGroupDropPatch(
+   grouping: TaskViewGrouping,
+   task: TaskaraTask,
+   groupKey: string
+): TaskUpdatePatch | null {
+   if (grouping === 'status') {
+      if (task.status === groupKey) return null;
+      return { status: groupKey };
+   }
+
+   if (grouping === 'priority') {
+      if (task.priority === groupKey) return null;
+      return { priority: groupKey };
+   }
+
+   if (grouping === 'project') {
+      if (task.project?.id === groupKey) return null;
+      return { projectId: groupKey };
+   }
+
+   const nextAssigneeId = groupKey === 'unassigned' ? null : groupKey;
+   if ((task.assignee?.id || null) === nextAssigneeId) return null;
+   return { assigneeId: nextAssigneeId };
+}
+
 const systemViewOrder: Array<{ key: SystemViewKey; label: string }> = [
    { key: 'all', label: fa.issue.all },
    { key: 'active', label: fa.issue.active },
@@ -175,12 +215,30 @@ function getSystemViewKey(viewKey: ActiveViewKey): SystemViewKey | null {
 
 const activeViewQueryParam = 'view';
 const activeViewStoragePrefix = 'taskara:tasks-active-view';
+const taskDraftViewStoragePrefix = 'taskara:tasks-draft-view';
 const taskComposerPreferenceStoragePrefix = 'taskara:task-composer-preferences';
+const issueListScrollStoragePrefix = 'taskara:issue-list-scroll';
+const issueListScrollSnapshotMaxAgeMs = 30 * 60 * 1000;
+const issueReturnHighlightDurationMs = 2500;
+
+type IssueListScrollSnapshot = {
+   hash: string;
+   pathname: string;
+   savedAt: number;
+   scrollLeft: number;
+   scrollTop: number;
+   search: string;
+   taskId?: string;
+};
+
+type StableTaskOrderSnapshot = {
+   key: string;
+   taskIds: string[];
+};
 
 type TaskComposerPreferences = {
    createMore?: boolean;
    projectId?: string;
-   assigneeId?: string;
 };
 
 function taskViewSelectionStorageKey(workspaceKey: string, teamKey: string) {
@@ -189,6 +247,14 @@ function taskViewSelectionStorageKey(workspaceKey: string, teamKey: string) {
 
 function taskComposerPreferenceStorageKey(workspaceKey: string, teamKey: string) {
    return `${taskComposerPreferenceStoragePrefix}:${workspaceKey}:${teamKey}`;
+}
+
+function taskDraftViewStorageKey(workspaceKey: string, teamKey: string, viewKey: ActiveViewKey) {
+   return `${taskDraftViewStoragePrefix}:${workspaceKey}:${teamKey}:${viewKey}`;
+}
+
+function issueListScrollStorageKey(pathname: string, search: string, hash: string) {
+   return `${issueListScrollStoragePrefix}:${pathname}${search}${hash}`;
 }
 
 function getActiveViewKeyFromSearch(search: string): ActiveViewKey | null {
@@ -206,6 +272,35 @@ function readStoredActiveViewKey(workspaceKey: string, teamKey: string): ActiveV
 function writeStoredActiveViewKey(workspaceKey: string, teamKey: string, viewKey: ActiveViewKey) {
    if (typeof window === 'undefined') return;
    window.localStorage.setItem(taskViewSelectionStorageKey(workspaceKey, teamKey), viewKey);
+}
+
+function readStoredTaskDraftView(
+   workspaceKey: string,
+   teamKey: string,
+   viewKey: ActiveViewKey
+): TaskaraTaskViewState | null {
+   if (typeof window === 'undefined') return null;
+   const raw = window.localStorage.getItem(taskDraftViewStorageKey(workspaceKey, teamKey, viewKey));
+   if (!raw) return null;
+   try {
+      const parsed = JSON.parse(raw) as TaskaraTaskViewState;
+      return parsed && typeof parsed === 'object' ? parsed : null;
+   } catch {
+      return null;
+   }
+}
+
+function writeStoredTaskDraftView(
+   workspaceKey: string,
+   teamKey: string,
+   viewKey: ActiveViewKey,
+   state: TaskaraTaskViewState
+) {
+   if (typeof window === 'undefined') return;
+   window.localStorage.setItem(
+      taskDraftViewStorageKey(workspaceKey, teamKey, viewKey),
+      JSON.stringify(state)
+   );
 }
 
 function readStoredTaskComposerPreferences(
@@ -233,6 +328,90 @@ function writeStoredTaskComposerPreferences(
       taskComposerPreferenceStorageKey(workspaceKey, teamKey),
       JSON.stringify(preferences)
    );
+}
+
+function readStoredIssueListScrollSnapshot(
+   pathname: string,
+   search: string,
+   hash: string
+): IssueListScrollSnapshot | null {
+   if (typeof window === 'undefined') return null;
+
+   const storageKey = issueListScrollStorageKey(pathname, search, hash);
+   let raw: string | null = null;
+   try {
+      raw = window.sessionStorage.getItem(storageKey);
+   } catch {
+      return null;
+   }
+   if (!raw) return null;
+
+   try {
+      const parsed = JSON.parse(raw) as Partial<IssueListScrollSnapshot>;
+      if (
+         parsed.pathname !== pathname ||
+         parsed.search !== search ||
+         parsed.hash !== hash ||
+         typeof parsed.scrollTop !== 'number' ||
+         typeof parsed.scrollLeft !== 'number' ||
+         typeof parsed.savedAt !== 'number' ||
+         Date.now() - parsed.savedAt > issueListScrollSnapshotMaxAgeMs
+      ) {
+         try {
+            window.sessionStorage.removeItem(storageKey);
+         } catch {
+            // Ignore sessionStorage failures.
+         }
+         return null;
+      }
+
+      return {
+         hash,
+         pathname,
+         savedAt: parsed.savedAt,
+         scrollLeft: Math.max(parsed.scrollLeft, 0),
+         scrollTop: Math.max(parsed.scrollTop, 0),
+         search,
+         taskId: typeof parsed.taskId === 'string' ? parsed.taskId : undefined,
+      };
+   } catch {
+      try {
+         window.sessionStorage.removeItem(storageKey);
+      } catch {
+         // Ignore sessionStorage failures.
+      }
+      return null;
+   }
+}
+
+function writeStoredIssueListScrollSnapshot(snapshot: IssueListScrollSnapshot) {
+   if (typeof window === 'undefined') return;
+
+   try {
+      window.sessionStorage.setItem(
+         issueListScrollStorageKey(snapshot.pathname, snapshot.search, snapshot.hash),
+         JSON.stringify(snapshot)
+      );
+   } catch {
+      // Ignore sessionStorage failures.
+   }
+}
+
+function removeStoredIssueListScrollSnapshot(pathname: string, search: string, hash: string) {
+   if (typeof window === 'undefined') return;
+   try {
+      window.sessionStorage.removeItem(issueListScrollStorageKey(pathname, search, hash));
+   } catch {
+      // Ignore sessionStorage failures.
+   }
+}
+
+function findIssueListTaskElement(container: HTMLElement, taskId: string) {
+   const candidates = container.querySelectorAll<HTMLElement>('[data-taskara-task-id]');
+   for (const candidate of candidates) {
+      if (candidate.dataset.taskaraTaskId === taskId) return candidate;
+   }
+   return null;
 }
 
 function searchWithActiveView(
@@ -470,6 +649,74 @@ function compareTasks(a: TaskaraTask, b: TaskaraTask, orderBy: TaskViewOrdering)
    return compareDateString(a.updatedAt, b.updatedAt, 0);
 }
 
+function makeStableTaskOrderKey(
+   pathname: string,
+   search: string,
+   hash: string,
+   activeViewKey: ActiveViewKey,
+   draftView: TaskaraTaskViewState
+) {
+   return JSON.stringify({
+      activeViewKey,
+      assigneeIds: draftView.assigneeIds,
+      completedIssues: draftView.completedIssues,
+      groupBy: draftView.groupBy,
+      hash,
+      labels: draftView.labels,
+      orderBy: draftView.orderBy,
+      pathname,
+      priority: draftView.priority,
+      projectIds: draftView.projectIds,
+      query: draftView.query,
+      search,
+      status: draftView.status,
+   });
+}
+
+function preserveStableTaskOrder(
+   tasks: TaskaraTask[],
+   orderBy: TaskViewOrdering,
+   key: string,
+   snapshot: StableTaskOrderSnapshot | null
+) {
+   const naturallySortedTasks = [...tasks].sort((a, b) => compareTasks(a, b, orderBy));
+
+   if (!snapshot || snapshot.key !== key) {
+      return {
+         nextSnapshot: {
+            key,
+            taskIds: naturallySortedTasks.map((task) => task.id),
+         },
+         tasks: naturallySortedTasks,
+      };
+   }
+
+   const orderById = new Map(snapshot.taskIds.map((taskId, index) => [taskId, index]));
+   const existingTasks: TaskaraTask[] = [];
+   const newTasks: TaskaraTask[] = [];
+
+   for (const task of tasks) {
+      if (orderById.has(task.id)) {
+         existingTasks.push(task);
+      } else {
+         newTasks.push(task);
+      }
+   }
+
+   existingTasks.sort((a, b) => (orderById.get(a.id) ?? 0) - (orderById.get(b.id) ?? 0));
+   newTasks.sort((a, b) => compareTasks(a, b, orderBy));
+
+   const orderedTasks = [...existingTasks, ...newTasks];
+
+   return {
+      nextSnapshot: {
+         key,
+         taskIds: orderedTasks.map((task) => task.id),
+      },
+      tasks: orderedTasks,
+   };
+}
+
 function taskMatchesQuery(task: TaskaraTask, query: string) {
    if (!query) return true;
    const normalizedQuery = query.trim().toLowerCase();
@@ -563,6 +810,7 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
    const [views, setViews] = useState<TaskaraView[]>([]);
    const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
    const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null);
+   const [returnHighlightedTaskId, setReturnHighlightedTaskId] = useState<string | null>(null);
    const [composerOpen, setComposerOpen] = useState(false);
    const [composerFullscreen, setComposerFullscreen] = useState(false);
    const [createMore, setCreateMore] = useState(false);
@@ -583,16 +831,23 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
    const [menuAnchor, setMenuAnchor] = useState<MenuAnchor | null>(null);
    const [activeFilterSection, setActiveFilterSection] = useState<FilterMenuSection | null>(null);
    const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+   const [viewActionsOpen, setViewActionsOpen] = useState(false);
    const [saveMode, setSaveMode] = useState<'create' | 'update'>('create');
    const [viewName, setViewName] = useState('');
    const [viewShared, setViewShared] = useState(true);
    const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+   const [dropTargetGroupKey, setDropTargetGroupKey] = useState<string | null>(null);
    const composerFileInputRef = useRef<HTMLInputElement>(null);
+   const scrollContainerRef = useRef<HTMLDivElement>(null);
+   const stableTaskOrderRef = useRef<StableTaskOrderSnapshot | null>(null);
    const restoredViewRequestRef = useRef<string | null>(null);
+   const restoredScrollRequestRef = useRef<string | null>(null);
    const restoredComposerPreferenceKeyRef = useRef<string | null>(null);
    const composerPreferencesHydratedRef = useRef(false);
    const defaultActiveViewKey: ActiveViewKey = `system:${defaultSystemView}`;
    const viewRestoreRequestKey = `${workspaceKey}:${viewScopeKey}:${location.search}`;
+   const scrollRestoreRequestKey = `${location.pathname}${location.search}${location.hash}`;
    const composerPreferenceKey = `${workspaceKey}:${viewScopeKey}`;
 
    const persistActiveViewSelection = useCallback(
@@ -638,6 +893,32 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
       if (typeof window === 'undefined') return 'left';
       return anchor.left < window.innerWidth / 2 ? 'right' : 'left';
    }, []);
+
+   const getCurrentIssueListReturnSearch = useCallback(
+      () => searchWithActiveView(location.search, activeViewKey, defaultActiveViewKey),
+      [activeViewKey, defaultActiveViewKey, location.search]
+   );
+
+   const saveIssueListScrollSnapshot = useCallback((taskId?: string) => {
+      const container = scrollContainerRef.current;
+      if (!container) return;
+      const returnSearch = getCurrentIssueListReturnSearch();
+
+      const snapshot = {
+         hash: location.hash,
+         pathname: location.pathname,
+         savedAt: Date.now(),
+         scrollLeft: container.scrollLeft,
+         scrollTop: container.scrollTop,
+         search: returnSearch,
+         taskId,
+      };
+
+      writeStoredIssueListScrollSnapshot(snapshot);
+      if (returnSearch !== location.search) {
+         writeStoredIssueListScrollSnapshot({ ...snapshot, search: location.search });
+      }
+   }, [getCurrentIssueListReturnSearch, location.hash, location.pathname, location.search]);
 
    const openFilterMenu = useCallback(
       (anchor?: MenuAnchor) => {
@@ -708,10 +989,6 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
          if (typeof storedProjectId === 'string') {
             setForm((current) => ({ ...current, projectId: storedProjectId }));
          }
-         const storedAssigneeId = stored.assigneeId;
-         if (typeof storedAssigneeId === 'string') {
-            setForm((current) => ({ ...current, assigneeId: storedAssigneeId }));
-         }
       }
       restoredComposerPreferenceKeyRef.current = composerPreferenceKey;
       composerPreferencesHydratedRef.current = true;
@@ -731,8 +1008,18 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
       const systemViewKey = getSystemViewKey(requestedViewKey);
 
       if (systemViewKey) {
+         const systemActiveViewKey: ActiveViewKey = `system:${systemViewKey}`;
+         const storedDraftView = readStoredTaskDraftView(
+            workspaceKey,
+            viewScopeKey,
+            systemActiveViewKey
+         );
          setActiveViewKey(`system:${systemViewKey}`);
-         setDraftView(buildSystemViewState(systemViewKey, currentTeamKey));
+         setDraftView(
+            storedDraftView
+               ? normalizeViewState(storedDraftView, currentTeamKey)
+               : buildSystemViewState(systemViewKey, currentTeamKey)
+         );
          setSelectedTaskId(null);
          setHighlightedIndex(null);
          restoredViewRequestRef.current = viewRestoreRequestKey;
@@ -741,8 +1028,13 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
 
       const savedView = visibleViews.find((view) => view.id === requestedViewKey);
       if (savedView) {
+         const storedDraftView = readStoredTaskDraftView(workspaceKey, viewScopeKey, savedView.id);
          setActiveViewKey(savedView.id);
-         setDraftView(normalizeViewState(savedView.state, currentTeamKey));
+         setDraftView(
+            storedDraftView
+               ? normalizeViewState(storedDraftView, currentTeamKey)
+               : normalizeViewState(savedView.state, currentTeamKey)
+         );
          setSelectedTaskId(null);
          setHighlightedIndex(null);
          restoredViewRequestRef.current = viewRestoreRequestKey;
@@ -752,7 +1044,16 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
       if (loading) return;
 
       setActiveViewKey(defaultActiveViewKey);
-      setDraftView(buildSystemViewState(defaultSystemView, currentTeamKey));
+      const storedDraftView = readStoredTaskDraftView(
+         workspaceKey,
+         viewScopeKey,
+         defaultActiveViewKey
+      );
+      setDraftView(
+         storedDraftView
+            ? normalizeViewState(storedDraftView, currentTeamKey)
+            : buildSystemViewState(defaultSystemView, currentTeamKey)
+      );
       setSelectedTaskId(null);
       setHighlightedIndex(null);
       writeStoredActiveViewKey(workspaceKey, viewScopeKey, defaultActiveViewKey);
@@ -768,6 +1069,11 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
       visibleViews,
       workspaceKey,
    ]);
+
+   useEffect(() => {
+      if (restoredViewRequestRef.current !== viewRestoreRequestKey) return;
+      writeStoredTaskDraftView(workspaceKey, viewScopeKey, activeViewKey, draftView);
+   }, [activeViewKey, draftView, viewRestoreRequestKey, viewScopeKey, workspaceKey]);
 
    const scopedProjects = useMemo(
       () =>
@@ -791,9 +1097,8 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
       writeStoredTaskComposerPreferences(workspaceKey, viewScopeKey, {
          createMore,
          projectId: form.projectId || undefined,
-         assigneeId: form.assigneeId || undefined,
       });
-   }, [createMore, form.assigneeId, form.projectId, viewScopeKey, workspaceKey]);
+   }, [createMore, form.projectId, viewScopeKey, workspaceKey]);
 
    const activeTeam = useMemo(
       () => (activeTeamSlug ? teams.find((team) => team.slug === activeTeamSlug) || null : null),
@@ -836,6 +1141,12 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
       () => visibleViews.find((view) => view.id === activeViewKey) || null,
       [activeViewKey, visibleViews]
    );
+   const canUpdateActiveSavedView = Boolean(
+      activeSavedView && (!activeSavedView.ownerId || activeSavedView.ownerId === currentUserId)
+   );
+   const canDeleteActiveSavedView = Boolean(
+      activeSavedView?.ownerId && activeSavedView.ownerId === currentUserId
+   );
 
    const hasDraftChanges = useMemo(() => {
       const systemViewKey = getSystemViewKey(activeViewKey);
@@ -849,7 +1160,7 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
       return JSON.stringify(baseline) !== JSON.stringify(draftView);
    }, [activeSavedView, activeViewKey, currentTeamKey, draftView]);
 
-   const filteredTasks = useMemo(() => {
+   const filteredTasksBeforeStableSort = useMemo(() => {
       return scopedTasks
          .filter((task) =>
             draftView.status.length ? draftView.status.includes(task.status) : true
@@ -876,9 +1187,31 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
                : true
          )
          .filter((task) => matchesCompletedIssueSetting(task, draftView.completedIssues))
-         .filter((task) => taskMatchesQuery(task, draftView.query))
-         .sort((a, b) => compareTasks(a, b, draftView.orderBy));
+         .filter((task) => taskMatchesQuery(task, draftView.query));
    }, [draftView, scopedTasks]);
+
+   const stableTaskOrderKey = useMemo(
+      () =>
+         makeStableTaskOrderKey(
+            location.pathname,
+            location.search,
+            location.hash,
+            activeViewKey,
+            draftView
+         ),
+      [activeViewKey, draftView, location.hash, location.pathname, location.search]
+   );
+
+   const filteredTasks = useMemo(() => {
+      const { nextSnapshot, tasks } = preserveStableTaskOrder(
+         filteredTasksBeforeStableSort,
+         draftView.orderBy,
+         stableTaskOrderKey,
+         stableTaskOrderRef.current
+      );
+      stableTaskOrderRef.current = nextSnapshot;
+      return tasks;
+   }, [draftView.orderBy, filteredTasksBeforeStableSort, stableTaskOrderKey]);
 
    const groupedTasks = useMemo<GroupDescriptor[]>(() => {
       const groups: Array<Omit<GroupDescriptor, 'tasks' | 'offset'> & { tasks: TaskaraTask[] }> =
@@ -975,6 +1308,10 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
    }, [draftView.groupBy, draftView.showEmptyGroups, filteredTasks, scopedProjects, users]);
 
    const visibleTasks = useMemo(() => groupedTasks.flatMap((group) => group.tasks), [groupedTasks]);
+   const visibleTaskById = useMemo(
+      () => new Map(visibleTasks.map((task) => [task.id, task])),
+      [visibleTasks]
+   );
 
    const viewCounts = useMemo(
       () => ({
@@ -984,8 +1321,71 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
       [scopedTasks]
    );
 
-   const openComposer = useCallback((fullscreen = false) => {
+   useEffect(() => {
+      restoredScrollRequestRef.current = null;
+   }, [scrollRestoreRequestKey]);
+
+   useEffect(() => {
+      if (loading) return;
+      if (restoredScrollRequestRef.current === scrollRestoreRequestKey) return;
+
+      const container = scrollContainerRef.current;
+      if (!container) return;
+
+      const snapshot = readStoredIssueListScrollSnapshot(
+         location.pathname,
+         location.search,
+         location.hash
+      );
+
+      if (!snapshot) {
+         restoredScrollRequestRef.current = scrollRestoreRequestKey;
+         return;
+      }
+
+      restoredScrollRequestRef.current = scrollRestoreRequestKey;
+      let highlightTimeout: number | undefined;
+
+      const frame = window.requestAnimationFrame(() => {
+         const maxScrollTop = Math.max(container.scrollHeight - container.clientHeight, 0);
+         const maxScrollLeft = Math.max(container.scrollWidth - container.clientWidth, 0);
+         container.scrollTo({
+            left: Math.min(snapshot.scrollLeft, maxScrollLeft),
+            top: Math.min(snapshot.scrollTop, maxScrollTop),
+         });
+         if (snapshot.taskId) {
+            const taskElement = findIssueListTaskElement(container, snapshot.taskId);
+            if (taskElement) {
+               taskElement.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+               setReturnHighlightedTaskId(snapshot.taskId);
+               highlightTimeout = window.setTimeout(
+                  () => setReturnHighlightedTaskId(null),
+                  issueReturnHighlightDurationMs
+               );
+            }
+         }
+         removeStoredIssueListScrollSnapshot(location.pathname, location.search, location.hash);
+      });
+
+      return () => {
+         window.cancelAnimationFrame(frame);
+         if (highlightTimeout !== undefined) window.clearTimeout(highlightTimeout);
+      };
+   }, [
+      groupedTasks.length,
+      loading,
+      location.hash,
+      location.pathname,
+      location.search,
+      scrollRestoreRequestKey,
+      visibleTasks.length,
+   ]);
+
+   const openComposer = useCallback((fullscreen = false, preserveAssignee = false) => {
       setComposerFullscreen(fullscreen);
+      if (!preserveAssignee) {
+         setForm((current) => ({ ...current, assigneeId: '' }));
+      }
       setComposerOpen(true);
    }, []);
 
@@ -995,11 +1395,8 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
             toast.message(fa.issue.pendingSync);
             return;
          }
-         const returnSearch = searchWithActiveView(
-            location.search,
-            activeViewKey,
-            defaultActiveViewKey
-         );
+         saveIssueListScrollSnapshot(task.id);
+         const returnSearch = getCurrentIssueListReturnSearch();
          navigate(`/${orgId || 'taskara'}/issue/${encodeURIComponent(task.key)}`, {
             state: {
                from: {
@@ -1011,13 +1408,12 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
          });
       },
       [
-         activeViewKey,
-         defaultActiveViewKey,
+         getCurrentIssueListReturnSearch,
          location.hash,
          location.pathname,
-         location.search,
          navigate,
          orgId,
+         saveIssueListScrollSnapshot,
       ]
    );
 
@@ -1236,7 +1632,7 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
          return;
       }
       const weight = form.weight === '' ? undefined : Number(form.weight);
-      if (weight !== undefined && (!Number.isFinite(weight) || weight < 1 || weight > 4)) {
+      if (weight !== undefined && (!Number.isFinite(weight) || !taskWeights.includes(weight as (typeof taskWeights)[number]))) {
          toast.error(fa.issue.invalidWeight);
          return;
       }
@@ -1274,7 +1670,7 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
             status: submittedStatus,
             priority: 'NO_PRIORITY',
             weight: submittedWeight,
-            assigneeId: submittedAssigneeId,
+            assigneeId: createMore ? submittedAssigneeId : '',
          });
          if (!createMore) setComposerOpen(false);
          void handleCreatedTaskAttachments(createTaskPromise, filesToUpload);
@@ -1340,6 +1736,60 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
          toast.error(err instanceof Error ? err.message : fa.issue.updateFailed);
       }
    }
+
+   const handleTaskDragStart = useCallback((event: DragEvent<HTMLElement>, taskId: string) => {
+      if (!canStartTaskDrag(event)) {
+         event.preventDefault();
+         return;
+      }
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData(taskDragMimeType, taskId);
+      event.dataTransfer.setData('text/plain', taskId);
+      setDraggingTaskId(taskId);
+   }, []);
+
+   const handleTaskDragEnd = useCallback(() => {
+      setDraggingTaskId(null);
+      setDropTargetGroupKey(null);
+   }, []);
+
+   const handleGroupDragOver = useCallback(
+      (event: DragEvent<HTMLElement>, groupKey: string) => {
+         const draggedTaskId = getDraggedTaskId(event) || draggingTaskId;
+         if (!draggedTaskId) return;
+         const draggedTask = visibleTaskById.get(draggedTaskId);
+         if (!draggedTask) return;
+         const patch = getGroupDropPatch(draftView.groupBy, draggedTask, groupKey);
+         if (!patch) return;
+         event.preventDefault();
+         event.dataTransfer.dropEffect = 'move';
+         setDropTargetGroupKey(groupKey);
+      },
+      [draggingTaskId, draftView.groupBy, visibleTaskById]
+   );
+
+   const handleGroupDragLeave = useCallback((event: DragEvent<HTMLElement>, groupKey: string) => {
+      const currentTarget = event.currentTarget;
+      const nextTarget = event.relatedTarget;
+      if (nextTarget instanceof Node && currentTarget.contains(nextTarget)) return;
+      setDropTargetGroupKey((current) => (current === groupKey ? null : current));
+   }, []);
+
+   const handleGroupDrop = useCallback(
+      async (event: DragEvent<HTMLElement>, groupKey: string) => {
+         event.preventDefault();
+         const draggedTaskId = getDraggedTaskId(event) || draggingTaskId;
+         setDropTargetGroupKey(null);
+         setDraggingTaskId(null);
+         if (!draggedTaskId) return;
+         const draggedTask = visibleTaskById.get(draggedTaskId);
+         if (!draggedTask) return;
+         const patch = getGroupDropPatch(draftView.groupBy, draggedTask, groupKey);
+         if (!patch) return;
+         await updateTask(draggedTask, patch);
+      },
+      [draggingTaskId, draftView.groupBy, visibleTaskById]
+   );
 
    async function deleteTask(task: TaskaraTask) {
       if (!window.confirm(`${fa.issue.deleteConfirm}\n${task.key} ${task.title}`)) return;
@@ -1418,7 +1868,32 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
          if (draftView.groupBy === 'project') return { ...current, projectId: group.key };
          return current;
       });
-      openComposer(false);
+      openComposer(false, true);
+   }
+
+   function openCreateViewDialog() {
+      setSaveMode('create');
+      setViewName('');
+      setViewShared(activeSavedView?.isShared ?? true);
+      setViewActionsOpen(false);
+      setSaveDialogOpen(true);
+   }
+
+   function openDuplicateViewDialog() {
+      setSaveMode('create');
+      setViewName(activeSavedView ? `${activeSavedView.name} کپی` : '');
+      setViewShared(activeSavedView?.isShared ?? true);
+      setViewActionsOpen(false);
+      setSaveDialogOpen(true);
+   }
+
+   function openUpdateViewDialog() {
+      if (!activeSavedView || !canUpdateActiveSavedView) return;
+      setSaveMode('update');
+      setViewName(activeSavedView.name);
+      setViewShared(activeSavedView.isShared);
+      setViewActionsOpen(false);
+      setSaveDialogOpen(true);
    }
 
    async function createView() {
@@ -1445,7 +1920,7 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
    }
 
    async function updateView() {
-      if (!activeSavedView) return;
+      if (!activeSavedView || !canUpdateActiveSavedView) return;
       try {
          const updated = await taskaraRequest<TaskaraView>(`/views/${activeSavedView.id}`, {
             method: 'PATCH',
@@ -1469,7 +1944,8 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
    }
 
    async function deleteActiveView() {
-      if (!activeSavedView) return;
+      if (!activeSavedView || !canDeleteActiveSavedView) return;
+      if (!window.confirm(`${fa.issue.deleteView}\n${activeSavedView.name}`)) return;
       try {
          await taskaraRequest(`/views/${activeSavedView.id}`, { method: 'DELETE' });
          setViews((current) => current.filter((view) => view.id !== activeSavedView.id));
@@ -1477,6 +1953,7 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
          startTransition(() => {
             void load();
          });
+         setViewActionsOpen(false);
          toast.success(fa.issue.deleteView);
       } catch (err) {
          toast.error(err instanceof Error ? err.message : fa.issue.deleteView);
@@ -1565,33 +2042,82 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
 
                      <div className="flex items-center gap-1.5">
                         <Button
-                           aria-label={activeSavedView ? fa.issue.updateView : fa.issue.saveView}
+                           aria-label={fa.issue.saveAsNewView}
+                           size="icon"
+                           variant="ghost"
+                           className="size-8 rounded-full border border-white/8 bg-white/[0.03] text-zinc-400 hover:bg-white/[0.08] hover:text-zinc-100"
+                           onClick={openCreateViewDialog}
+                        >
+                           <Plus className="size-4" />
+                        </Button>
+                        <Button
+                           aria-label={fa.issue.updateView}
                            size="icon"
                            variant="ghost"
                            className={cn(
                               'size-8 rounded-full border border-white/8 bg-white/[0.03] text-zinc-400 hover:bg-white/[0.08] hover:text-zinc-100',
-                              !hasDraftChanges && 'hidden'
+                              (!activeSavedView || !canUpdateActiveSavedView || !hasDraftChanges) &&
+                                 'hidden'
                            )}
-                           onClick={() => {
-                              if (activeSavedView) {
-                                 setSaveMode('update');
-                                 setViewName(activeSavedView.name);
-                                 setViewShared(activeSavedView.isShared);
-                              } else {
-                                 setSaveMode('create');
-                                 setViewName('');
-                                 setViewShared(true);
-                              }
-                              setSaveDialogOpen(true);
-                           }}
+                           onClick={openUpdateViewDialog}
                         >
                            <Save className="size-4" />
                         </Button>
+                        {activeSavedView ? (
+                           <Popover open={viewActionsOpen} onOpenChange={setViewActionsOpen}>
+                              <PopoverTrigger asChild>
+                                 <Button
+                                    aria-label={fa.app.more}
+                                    size="icon"
+                                    variant="ghost"
+                                    className="size-8 rounded-full border border-white/8 bg-white/[0.03] text-zinc-400 hover:bg-white/[0.08] hover:text-zinc-100"
+                                 >
+                                    <MoreHorizontal className="size-4" />
+                                 </Button>
+                              </PopoverTrigger>
+                              <PopoverContent
+                                 align="end"
+                                 className="w-56 rounded-xl border-white/10 bg-[#202023] p-1.5 text-zinc-100 shadow-2xl [direction:rtl]"
+                                 sideOffset={8}
+                              >
+                                 <div className="space-y-1">
+                                    {canUpdateActiveSavedView ? (
+                                       <button
+                                          className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-sm text-zinc-300 transition hover:bg-white/[0.07] hover:text-zinc-100"
+                                          type="button"
+                                          onClick={openUpdateViewDialog}
+                                       >
+                                          <Save className="size-4 text-zinc-500" />
+                                          <span>{fa.issue.updateView}</span>
+                                       </button>
+                                    ) : null}
+                                    <button
+                                       className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-sm text-zinc-300 transition hover:bg-white/[0.07] hover:text-zinc-100"
+                                       type="button"
+                                       onClick={openDuplicateViewDialog}
+                                    >
+                                       <Copy className="size-4 text-zinc-500" />
+                                       <span>{fa.issue.saveAsNewView}</span>
+                                    </button>
+                                    {canDeleteActiveSavedView ? (
+                                       <button
+                                          className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-sm text-red-300 transition hover:bg-red-500/10 hover:text-red-200"
+                                          type="button"
+                                          onClick={() => void deleteActiveView()}
+                                       >
+                                          <Trash2 className="size-4 text-red-400" />
+                                          <span>{fa.issue.deleteView}</span>
+                                       </button>
+                                    ) : null}
+                                 </div>
+                              </PopoverContent>
+                           </Popover>
+                        ) : null}
                      </div>
                   </div>
                </div>
 
-               <div className="h-[calc(100%-61px)] overflow-auto">
+               <div ref={scrollContainerRef} className="h-[calc(100%-61px)] overflow-auto">
                   {loading ? (
                      <div className="p-4 text-sm text-zinc-500">{fa.app.loading}</div>
                   ) : activeTeam && scopedProjects.length === 0 && unassignedProjects.length > 0 ? (
@@ -1615,13 +2141,22 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
                               highlightedIndex={highlightedIndex}
                               labelOptions={labelOptions}
                               projects={scopedProjects}
+                              returnHighlightedTaskId={returnHighlightedTaskId}
                               selectedTaskId={selectedTaskId}
+                              draggingTaskId={draggingTaskId}
+                              dropTargetGroupKey={dropTargetGroupKey}
                               onAdd={() => openComposerForGroup(group)}
                               onDelete={(task) => void deleteTask(task)}
+                              onDragEnd={handleTaskDragEnd}
+                              onDragStart={handleTaskDragStart}
+                              onGroupDragLeave={handleGroupDragLeave}
+                              onGroupDragOver={handleGroupDragOver}
+                              onGroupDrop={handleGroupDrop}
                               onOpen={openIssuePage}
                               onAssigneeChange={(task, assigneeId) =>
                                  void updateTask(task, { assigneeId })
                               }
+                              onWeightChange={(task, weight) => void updateTask(task, { weight })}
                               onDueAtChange={(task, dueAt) => void updateTask(task, { dueAt })}
                               onLabelsChange={(task, labels) => void updateTask(task, { labels })}
                               onPriorityChange={(task, priority) =>
@@ -1651,9 +2186,17 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
                               highlightedIndex={highlightedIndex}
                               labelOptions={labelOptions}
                               projects={scopedProjects}
+                              returnHighlightedTaskId={returnHighlightedTaskId}
                               selectedTaskId={selectedTaskId}
+                              draggingTaskId={draggingTaskId}
+                              dropTargetGroupKey={dropTargetGroupKey}
                               onAdd={() => openComposerForGroup(group)}
                               onDelete={(task) => void deleteTask(task)}
+                              onDragEnd={handleTaskDragEnd}
+                              onDragStart={handleTaskDragStart}
+                              onGroupDragLeave={handleGroupDragLeave}
+                              onGroupDragOver={handleGroupDragOver}
+                              onGroupDrop={handleGroupDrop}
                               onOpen={openIssuePage}
                               onPriorityChange={(task, priority) =>
                                  void updateTask(task, { priority })
@@ -1669,6 +2212,7 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
                               onAssigneeChange={(task, assigneeId) =>
                                  void updateTask(task, { assigneeId })
                               }
+                              onWeightChange={(task, weight) => void updateTask(task, { weight })}
                               onDueAtChange={(task, dueAt) => void updateTask(task, { dueAt })}
                               onLabelsChange={(task, labels) => void updateTask(task, { labels })}
                               onToggleCollapse={() => toggleGroup(group.key)}
@@ -2071,10 +2615,11 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
                            onChange={(weight) => setForm((current) => ({ ...current, weight }))}
                         >
                            <option value="">بدون وزن</option>
-                           <option value="1">1</option>
-                           <option value="2">2</option>
-                           <option value="3">3</option>
-                           <option value="4">4</option>
+                           {taskWeights.map((item) => (
+                              <option key={item} value={String(item)}>
+                                 {item.toLocaleString('fa-IR')}
+                              </option>
+                           ))}
                         </ComposerSelectPill>
                         <ComposerTextPill
                            ariaLabel={fa.issue.labels}
@@ -3173,16 +3718,25 @@ function ListGroup({
    displayProperties,
    selectedTaskId,
    highlightedIndex,
+   draggingTaskId,
+   dropTargetGroupKey,
    labelOptions,
    projects,
+   returnHighlightedTaskId,
    onAdd,
    onDelete,
+   onDragStart,
+   onDragEnd,
+   onGroupDragOver,
+   onGroupDragLeave,
+   onGroupDrop,
    onSelect,
    onOpen,
    onStatusChange,
    onPriorityChange,
    onProjectChange,
    onAssigneeChange,
+   onWeightChange,
    onDueAtChange,
    onLabelsChange,
    onToggleCollapse,
@@ -3193,23 +3747,40 @@ function ListGroup({
    displayProperties: TaskViewDisplayProperty[];
    selectedTaskId: string | null;
    highlightedIndex: number | null;
+   draggingTaskId: string | null;
+   dropTargetGroupKey: string | null;
    labelOptions: Array<{ id: string; name: string }>;
    projects: TaskaraProject[];
+   returnHighlightedTaskId: string | null;
    onAdd: () => void;
    onDelete: (task: TaskaraTask) => void;
+   onDragStart: (event: DragEvent<HTMLElement>, taskId: string) => void;
+   onDragEnd: () => void;
+   onGroupDragOver: (event: DragEvent<HTMLElement>, groupKey: string) => void;
+   onGroupDragLeave: (event: DragEvent<HTMLElement>, groupKey: string) => void;
+   onGroupDrop: (event: DragEvent<HTMLElement>, groupKey: string) => void;
    onSelect: (task: TaskaraTask, absoluteIndex: number) => void;
    onOpen: (task: TaskaraTask) => void;
    onStatusChange: (task: TaskaraTask, status: string) => void;
    onPriorityChange: (task: TaskaraTask, priority: string) => void;
    onProjectChange: (task: TaskaraTask, projectId: string) => void;
    onAssigneeChange: (task: TaskaraTask, assigneeId: string | null) => void;
+   onWeightChange: (task: TaskaraTask, weight: number | null) => void;
    onDueAtChange: (task: TaskaraTask, dueAt: string | null) => void;
    onLabelsChange: (task: TaskaraTask, labels: string[]) => void;
    onToggleCollapse: () => void;
    users: TaskaraUser[];
 }) {
    return (
-      <section className="pb-1">
+      <section
+         className={cn(
+            'pb-1 transition-colors',
+            dropTargetGroupKey === group.key && 'bg-indigo-400/[0.06]'
+         )}
+         onDragOver={(event) => onGroupDragOver(event, group.key)}
+         onDragLeave={(event) => onGroupDragLeave(event, group.key)}
+         onDrop={(event) => onGroupDrop(event, group.key)}
+      >
          <div className="sticky top-0 z-20 bg-[#101011] px-3 pt-2 pb-1">
             <div className="relative h-11 overflow-hidden rounded-lg bg-[#171719]">
                <div
@@ -3260,8 +3831,12 @@ function ListGroup({
                      key={task.id}
                      highlighted={group.offset + index === highlightedIndex}
                      displayProperties={displayProperties}
+                     dragging={draggingTaskId === task.id}
+                     returnHighlighted={returnHighlightedTaskId === task.id}
                      selected={selectedTaskId === task.id}
                      task={task}
+                     onDragEnd={onDragEnd}
+                     onDragStart={onDragStart}
                      onClick={() => {
                         onSelect(task, group.offset + index);
                         onOpen(task);
@@ -3270,6 +3845,7 @@ function ListGroup({
                      onProjectChange={(projectId) => onProjectChange(task, projectId)}
                      onStatusChange={(status) => onStatusChange(task, status)}
                      onAssigneeChange={(assigneeId) => onAssigneeChange(task, assigneeId)}
+                     onWeightChange={(weight) => onWeightChange(task, weight)}
                      onDueAtChange={(dueAt) => onDueAtChange(task, dueAt)}
                      onLabelsChange={(labels) => onLabelsChange(task, labels)}
                      onDelete={() => onDelete(task)}
@@ -3290,16 +3866,25 @@ function BoardGroup({
    displayProperties,
    selectedTaskId,
    highlightedIndex,
+   draggingTaskId,
+   dropTargetGroupKey,
    labelOptions,
    projects,
+   returnHighlightedTaskId,
    onAdd,
    onDelete,
+   onDragStart,
+   onDragEnd,
+   onGroupDragOver,
+   onGroupDragLeave,
+   onGroupDrop,
    onSelect,
    onOpen,
    onStatusChange,
    onPriorityChange,
    onProjectChange,
    onAssigneeChange,
+   onWeightChange,
    onDueAtChange,
    onLabelsChange,
    onToggleCollapse,
@@ -3310,16 +3895,25 @@ function BoardGroup({
    displayProperties: TaskViewDisplayProperty[];
    selectedTaskId: string | null;
    highlightedIndex: number | null;
+   draggingTaskId: string | null;
+   dropTargetGroupKey: string | null;
    labelOptions: Array<{ id: string; name: string }>;
    projects: TaskaraProject[];
+   returnHighlightedTaskId: string | null;
    onAdd: () => void;
    onDelete: (task: TaskaraTask) => void;
+   onDragStart: (event: DragEvent<HTMLElement>, taskId: string) => void;
+   onDragEnd: () => void;
+   onGroupDragOver: (event: DragEvent<HTMLElement>, groupKey: string) => void;
+   onGroupDragLeave: (event: DragEvent<HTMLElement>, groupKey: string) => void;
+   onGroupDrop: (event: DragEvent<HTMLElement>, groupKey: string) => void;
    onSelect: (task: TaskaraTask, absoluteIndex: number) => void;
    onOpen: (task: TaskaraTask) => void;
    onStatusChange: (task: TaskaraTask, status: string) => void;
    onPriorityChange: (task: TaskaraTask, priority: string) => void;
    onProjectChange: (task: TaskaraTask, projectId: string) => void;
    onAssigneeChange: (task: TaskaraTask, assigneeId: string | null) => void;
+   onWeightChange: (task: TaskaraTask, weight: number | null) => void;
    onDueAtChange: (task: TaskaraTask, dueAt: string | null) => void;
    onLabelsChange: (task: TaskaraTask, labels: string[]) => void;
    onToggleCollapse: () => void;
@@ -3328,9 +3922,13 @@ function BoardGroup({
    return (
       <section
          className={cn(
-            'flex h-full shrink-0 flex-col overflow-hidden rounded-lg border border-white/8 bg-[#171719]',
+            'flex h-full shrink-0 flex-col overflow-hidden rounded-lg border border-white/8 bg-[#171719] transition-colors',
+            dropTargetGroupKey === group.key && 'border-indigo-400/35 bg-indigo-400/[0.06]',
             collapsed ? 'w-[48px]' : 'w-[320px]'
          )}
+         onDragOver={(event) => onGroupDragOver(event, group.key)}
+         onDragLeave={(event) => onGroupDragLeave(event, group.key)}
+         onDrop={(event) => onGroupDrop(event, group.key)}
       >
          <div className="relative h-10 bg-[#171719]">
             <div
@@ -3383,8 +3981,12 @@ function BoardGroup({
                         key={task.id}
                         highlighted={group.offset + index === highlightedIndex}
                         displayProperties={displayProperties}
+                        dragging={draggingTaskId === task.id}
+                        returnHighlighted={returnHighlightedTaskId === task.id}
                         selected={selectedTaskId === task.id}
                         task={task}
+                        onDragEnd={onDragEnd}
+                        onDragStart={onDragStart}
                         onClick={() => {
                            onSelect(task, group.offset + index);
                            onOpen(task);
@@ -3393,6 +3995,7 @@ function BoardGroup({
                         onProjectChange={(projectId) => onProjectChange(task, projectId)}
                         onStatusChange={(status) => onStatusChange(task, status)}
                         onAssigneeChange={(assigneeId) => onAssigneeChange(task, assigneeId)}
+                        onWeightChange={(weight) => onWeightChange(task, weight)}
                         onDueAtChange={(dueAt) => onDueAtChange(task, dueAt)}
                         onLabelsChange={(labels) => onLabelsChange(task, labels)}
                         onDelete={() => onDelete(task)}
@@ -3412,12 +4015,17 @@ function IssueRow({
    task,
    selected,
    highlighted,
+   dragging,
+   returnHighlighted,
    displayProperties,
+   onDragStart,
+   onDragEnd,
    onClick,
    onStatusChange,
    onPriorityChange,
    onProjectChange,
    onAssigneeChange,
+   onWeightChange,
    onDueAtChange,
    onLabelsChange,
    onDelete,
@@ -3428,12 +4036,17 @@ function IssueRow({
    task: TaskaraTask;
    selected: boolean;
    highlighted: boolean;
+   dragging: boolean;
+   returnHighlighted: boolean;
    displayProperties: TaskViewDisplayProperty[];
+   onDragStart: (event: DragEvent<HTMLElement>, taskId: string) => void;
+   onDragEnd: () => void;
    onClick: () => void;
    onStatusChange: (status: string) => void;
    onPriorityChange: (priority: string) => void;
    onProjectChange: (projectId: string) => void;
    onAssigneeChange: (assigneeId: string | null) => void;
+   onWeightChange: (weight: number | null) => void;
    onDueAtChange: (dueAt: string | null) => void;
    onLabelsChange: (labels: string[]) => void;
    onDelete: () => void;
@@ -3451,11 +4064,17 @@ function IssueRow({
                className={cn(
                   'group cursor-pointer',
                   'grid min-h-11 w-full grid-cols-[28px_88px_26px_minmax(0,1fr)_auto] items-center gap-2.5 rounded-lg px-3 text-start text-sm outline-none transition-colors duration-150 hover:bg-white/[0.028] hover:shadow-[inset_0_1px_0_rgb(255_255_255/0.015)]',
+                  dragging && 'opacity-55',
                   selected && 'bg-indigo-400/10',
+                  returnHighlighted && 'bg-indigo-400/8 ring-1 ring-inset ring-indigo-300/30',
                   highlighted && 'bg-white/[0.045] ring-1 ring-inset ring-indigo-400/35'
                )}
+               data-taskara-task-id={task.id}
+               draggable
                role="button"
                tabIndex={0}
+               onDragEnd={onDragEnd}
+               onDragStart={(event) => onDragStart(event, task.id)}
                onClick={onClick}
                onKeyDown={(event) => {
                   if (event.currentTarget !== event.target) return;
@@ -3551,6 +4170,7 @@ function IssueRow({
             onDelete={onDelete}
             onDueAtChange={onDueAtChange}
             onLabelsChange={onLabelsChange}
+            onWeightChange={onWeightChange}
             onOpen={onClick}
             onPriorityChange={onPriorityChange}
             onProjectChange={onProjectChange}
@@ -3564,12 +4184,17 @@ function IssueCard({
    task,
    selected,
    highlighted,
+   dragging,
+   returnHighlighted,
    displayProperties,
+   onDragStart,
+   onDragEnd,
    onClick,
    onStatusChange,
    onPriorityChange,
    onProjectChange,
    onAssigneeChange,
+   onWeightChange,
    onDueAtChange,
    onLabelsChange,
    onDelete,
@@ -3580,12 +4205,17 @@ function IssueCard({
    task: TaskaraTask;
    selected: boolean;
    highlighted: boolean;
+   dragging: boolean;
+   returnHighlighted: boolean;
    displayProperties: TaskViewDisplayProperty[];
+   onDragStart: (event: DragEvent<HTMLElement>, taskId: string) => void;
+   onDragEnd: () => void;
    onClick: () => void;
    onStatusChange: (status: string) => void;
    onPriorityChange: (priority: string) => void;
    onProjectChange: (projectId: string) => void;
    onAssigneeChange: (assigneeId: string | null) => void;
+   onWeightChange: (weight: number | null) => void;
    onDueAtChange: (dueAt: string | null) => void;
    onLabelsChange: (labels: string[]) => void;
    onDelete: () => void;
@@ -3601,11 +4231,17 @@ function IssueCard({
             <div
                className={cn(
                   'w-full cursor-pointer rounded-lg border border-white/8 bg-[#202024] p-2.5 text-start transition hover:bg-[#252529]',
+                  dragging && 'opacity-55',
                   selected && 'border-indigo-400/40 bg-indigo-400/8',
+                  returnHighlighted && 'border-indigo-300/30 bg-indigo-400/8',
                   highlighted && 'ring-1 ring-inset ring-indigo-400/35'
                )}
+               data-taskara-task-id={task.id}
+               draggable
                role="button"
                tabIndex={0}
+               onDragEnd={onDragEnd}
+               onDragStart={(event) => onDragStart(event, task.id)}
                onClick={onClick}
                onKeyDown={(event) => {
                   if (event.currentTarget !== event.target) return;
@@ -3681,6 +4317,7 @@ function IssueCard({
             onDelete={onDelete}
             onDueAtChange={onDueAtChange}
             onLabelsChange={onLabelsChange}
+            onWeightChange={onWeightChange}
             onOpen={onClick}
             onPriorityChange={onPriorityChange}
             onProjectChange={onProjectChange}
@@ -3879,6 +4516,7 @@ function TaskIssueContextMenu({
    onPriorityChange,
    onProjectChange,
    onAssigneeChange,
+   onWeightChange,
    onDueAtChange,
    onLabelsChange,
    onDelete,
@@ -3892,6 +4530,7 @@ function TaskIssueContextMenu({
    onPriorityChange: (priority: string) => void;
    onProjectChange: (projectId: string) => void;
    onAssigneeChange: (assigneeId: string | null) => void;
+   onWeightChange: (weight: number | null) => void;
    onDueAtChange: (dueAt: string | null) => void;
    onLabelsChange: (labels: string[]) => void;
    onDelete: () => void;
@@ -3972,6 +4611,34 @@ function TaskIssueContextMenu({
                      label={linearPriorityMeta[item]?.label || item}
                      shortcut={String(index)}
                      onSelect={() => onPriorityChange(item)}
+                  />
+               ))}
+            </ContextMenuSubContent>
+         </ContextMenuSub>
+
+         <ContextMenuSub>
+            <LinearContextSubTrigger
+               icon={<Box className="size-4 text-zinc-400" />}
+               label={fa.issue.weight}
+               shortcut="W"
+            />
+            <ContextMenuSubContent
+               dir="rtl"
+               className="w-56 rounded-xl border-white/10 bg-[#202023] p-1 text-zinc-100"
+            >
+               <LinearContextItem
+                  active={task.weight === null || task.weight === undefined}
+                  icon={<XCircle className="size-4 text-zinc-500" />}
+                  label="بدون وزن"
+                  onSelect={() => onWeightChange(null)}
+               />
+               {taskWeights.map((item) => (
+                  <LinearContextItem
+                     key={item}
+                     active={task.weight === item}
+                     icon={<Box className="size-4 text-zinc-400" />}
+                     label={`${fa.issue.weight} ${item.toLocaleString('fa-IR')}`}
+                     onSelect={() => onWeightChange(item)}
                   />
                ))}
             </ContextMenuSubContent>

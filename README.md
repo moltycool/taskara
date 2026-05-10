@@ -1,6 +1,16 @@
 # Taskara
 
-Agentic team task manager optimized for Mattermost and Codex workflows, backed by PostgreSQL and Prisma. The React UI is intentionally minimal, RTL-first, and Jalali-date aware.
+Agentic team task manager optimized for Mattermost and Codex workflows, backed by PostgreSQL and Prisma. The UI is RTL-first, Jalali date-time aware, and shaped around a Linear-like task experience.
+
+![Taskara dashboard](assets/taskara.png)
+
+## Highlights
+
+- Linear-like workflow states: backlog, todo, in progress, review, blocked, done, canceled
+- Jalali timer/date-time support for due scheduling (example: `1405/02/04 14:30`)
+- RTL-first Persian UI with workspace/project/task hierarchy
+- Mattermost slash-command integration for task creation and updates
+- Native Codex plugin for MCP-based task operations and agent workflows
 
 ## Stack
 

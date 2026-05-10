@@ -13,6 +13,10 @@ import { createTask, serializeTaskForResponse, taskInclude } from './tasks';
 type CreateMeetingInput = z.infer<typeof createMeetingSchema>;
 type UpdateMeetingInput = z.infer<typeof updateMeetingSchema>;
 type CreateMeetingTasksInput = z.infer<typeof createMeetingTasksSchema>;
+export type MeetingAccessScope = {
+  memberTeamIds: string[];
+  memberProjectIds: string[];
+};
 
 const userSelect = {
   id: true,
@@ -24,7 +28,7 @@ const userSelect = {
 
 export const meetingInclude = {
   team: { select: { id: true, name: true, slug: true } },
-  project: { select: { id: true, name: true, keyPrefix: true, teamId: true } },
+  project: { select: { id: true, name: true, keyPrefix: true, teamId: true, leadId: true } },
   owner: { select: userSelect },
   createdBy: { select: userSelect },
   participants: {
@@ -41,16 +45,82 @@ export const meetingInclude = {
 type MeetingWithAccess = {
   ownerId?: string | null;
   createdById?: string | null;
+  teamId?: string | null;
+  projectId?: string | null;
+  project?: { teamId?: string | null } | null;
   participants?: Array<{ userId: string }>;
 };
 
-export function canAccessMeeting(actor: RequestActor, meeting: MeetingWithAccess): boolean {
-  return (
-    isWorkspaceAdminRole(actor.role) ||
-    meeting.ownerId === actor.user.id ||
-    meeting.createdById === actor.user.id ||
-    Boolean(meeting.participants?.some((participant) => participant.userId === actor.user.id))
-  );
+export async function resolveMeetingAccessScope(actor: RequestActor): Promise<MeetingAccessScope> {
+  const [teamMemberships, directProjectMemberships, leadProjects] = await Promise.all([
+    prisma.teamMember.findMany({
+      where: {
+        userId: actor.user.id,
+        team: { workspaceId: actor.workspace.id }
+      },
+      select: { teamId: true }
+    }),
+    prisma.projectMember.findMany({
+      where: {
+        userId: actor.user.id,
+        project: { workspaceId: actor.workspace.id }
+      },
+      select: { projectId: true }
+    }),
+    prisma.project.findMany({
+      where: { workspaceId: actor.workspace.id, leadId: actor.user.id },
+      select: { id: true }
+    })
+  ]);
+
+  return {
+    memberTeamIds: [...new Set(teamMemberships.map((membership) => membership.teamId))],
+    memberProjectIds: [...new Set([
+      ...directProjectMemberships.map((membership) => membership.projectId),
+      ...leadProjects.map((project) => project.id)
+    ])]
+  };
+}
+
+export function buildMeetingAccessWhere(
+  actor: RequestActor,
+  scope: MeetingAccessScope,
+  options?: { mineOnly?: boolean }
+): Prisma.MeetingWhereInput {
+  const mineOnly = Boolean(options?.mineOnly);
+  const predicates: Prisma.MeetingWhereInput[] = [
+    { participants: { some: { userId: actor.user.id } } },
+    { ownerId: actor.user.id },
+    { createdById: actor.user.id }
+  ];
+
+  if (mineOnly) {
+    return { OR: predicates };
+  }
+
+  if (isWorkspaceAdminRole(actor.role)) {
+    if (scope.memberTeamIds.length > 0) {
+      predicates.push({ teamId: { in: scope.memberTeamIds } });
+      predicates.push({ project: { is: { teamId: { in: scope.memberTeamIds } } } });
+    }
+    if (scope.memberProjectIds.length > 0) {
+      predicates.push({ projectId: { in: scope.memberProjectIds } });
+    }
+  }
+
+  return { OR: predicates };
+}
+
+export function canAccessMeeting(actor: RequestActor, meeting: MeetingWithAccess, scope: MeetingAccessScope): boolean {
+  if (meeting.participants?.some((participant) => participant.userId === actor.user.id)) return true;
+  if (meeting.ownerId === actor.user.id || meeting.createdById === actor.user.id) return true;
+
+  if (!isWorkspaceAdminRole(actor.role)) return false;
+
+  if (meeting.teamId && scope.memberTeamIds.includes(meeting.teamId)) return true;
+  if (meeting.project?.teamId && scope.memberTeamIds.includes(meeting.project.teamId)) return true;
+  if (meeting.projectId && scope.memberProjectIds.includes(meeting.projectId)) return true;
+  return false;
 }
 
 export async function createMeeting(actor: RequestActor, input: CreateMeetingInput) {
@@ -110,12 +180,13 @@ export async function createMeeting(actor: RequestActor, input: CreateMeetingInp
 
 export async function updateMeeting(actor: RequestActor, meetingId: string, input: UpdateMeetingInput) {
   let notificationRecipientIds: string[] = [];
+  const accessScope = await resolveMeetingAccessScope(actor);
   const existing = await prisma.meeting.findFirst({
     where: { id: meetingId, workspaceId: actor.workspace.id },
     include: meetingInclude
   });
   if (!existing) throw new HttpError(404, 'Meeting not found');
-  if (!canAccessMeeting(actor, existing)) throw new HttpError(403, 'Meeting access denied');
+  if (!canAccessMeeting(actor, existing, accessScope)) throw new HttpError(403, 'Meeting access denied');
 
   const meeting = await prisma.$transaction(async (tx) => {
     await assertMeetingRelations(tx, actor, input);
@@ -178,12 +249,13 @@ export async function updateMeeting(actor: RequestActor, meetingId: string, inpu
 }
 
 export async function createTasksFromMeeting(actor: RequestActor, meetingId: string, input: CreateMeetingTasksInput) {
+  const accessScope = await resolveMeetingAccessScope(actor);
   const meeting = await prisma.meeting.findFirst({
     where: { id: meetingId, workspaceId: actor.workspace.id },
     include: meetingInclude
   });
   if (!meeting) throw new HttpError(404, 'Meeting not found');
-  if (!canAccessMeeting(actor, meeting)) throw new HttpError(403, 'Meeting access denied');
+  if (!canAccessMeeting(actor, meeting, accessScope)) throw new HttpError(403, 'Meeting access denied');
 
   const tasks = [];
   for (const item of input.tasks) {
@@ -223,12 +295,13 @@ export async function createTasksFromMeeting(actor: RequestActor, meetingId: str
 }
 
 export async function sendMeetingSms(actor: RequestActor, meetingId: string) {
+  const accessScope = await resolveMeetingAccessScope(actor);
   const meeting = await prisma.meeting.findFirst({
     where: { id: meetingId, workspaceId: actor.workspace.id },
     include: meetingInclude
   });
   if (!meeting) throw new HttpError(404, 'Meeting not found');
-  if (!canAccessMeeting(actor, meeting)) throw new HttpError(403, 'Meeting access denied');
+  if (!canAccessMeeting(actor, meeting, accessScope)) throw new HttpError(403, 'Meeting access denied');
   if (!config.SMS_KAVEH_SENDER) throw new HttpError(503, 'SMS_KAVEH_SENDER is required to send meeting SMS');
 
   const summary = { sent: 0, skippedNoPhone: 0, failed: 0 };

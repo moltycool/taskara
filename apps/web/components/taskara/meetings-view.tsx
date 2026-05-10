@@ -19,6 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { DescriptionEditor } from '@/components/taskara/description-editor';
 import { LazyJalaliDatePicker } from '@/components/taskara/lazy-jalali-date-picker';
 import { LinearAvatar } from '@/components/taskara/linear-ui';
+import { SmsConfirmDialog } from '@/components/taskara/sms-confirm-dialog';
 import { UserMultiSelectCombobox } from '@/components/taskara/user-multi-select-combobox';
 import { formatJalaliDateTime } from '@/lib/jalali';
 import { dispatchWorkspaceRefresh, useLiveRefresh } from '@/lib/live-refresh';
@@ -51,6 +52,7 @@ export function MeetingsView() {
    const [form, setForm] = useState(emptyMeetingForm);
    const [submitting, setSubmitting] = useState(false);
    const [smsSending, setSmsSending] = useState(false);
+   const [smsConfirmOpen, setSmsConfirmOpen] = useState(false);
 
    const load = useCallback(async () => {
       setError('');
@@ -144,6 +146,16 @@ export function MeetingsView() {
       }
    }
 
+   function requestSmsSend() {
+      if (!selected || smsSending) return;
+      setSmsConfirmOpen(true);
+   }
+
+   function confirmSmsSend() {
+      setSmsConfirmOpen(false);
+      void sendSms();
+   }
+
    return (
       <div className="grid h-full min-h-0 grid-cols-1 overflow-hidden bg-[#101011] text-zinc-200 lg:grid-cols-[360px_minmax(0,1fr)] xl:grid-cols-[390px_minmax(0,1fr)_320px]">
          <section className="flex min-h-0 flex-col border-b border-white/8 lg:border-b-0 lg:border-e">
@@ -199,7 +211,7 @@ export function MeetingsView() {
                         <span>{formatJalaliDateTime(selected.scheduledAt || selected.heldAt || selected.createdAt)}</span>
                         {detailsLoading ? <Loader2 className="size-4 animate-spin" /> : null}
                      </div>
-                     <Button size="sm" variant="ghost" className="h-8 gap-2 rounded-full text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100" disabled={smsSending} onClick={() => void sendSms()}>
+                     <Button size="sm" variant="ghost" className="h-8 gap-2 rounded-full text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100" disabled={smsSending} onClick={requestSmsSend}>
                         {smsSending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
                         {fa.meeting.sendSms}
                      </Button>
@@ -231,7 +243,7 @@ export function MeetingsView() {
                      variant="ghost"
                      className="h-8 w-full gap-2 rounded-full text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100"
                      disabled={!selected || smsSending}
-                     onClick={() => void sendSms()}
+                     onClick={requestSmsSend}
                   >
                      {smsSending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
                      {fa.meeting.sendSms}
@@ -390,6 +402,15 @@ export function MeetingsView() {
                </form>
             </DialogContent>
          </Dialog>
+         <SmsConfirmDialog
+            confirmLabel={fa.app.confirm}
+            description={fa.app.smsConfirmDescription}
+            open={smsConfirmOpen}
+            pending={smsSending}
+            title={fa.meeting.sendSms}
+            onConfirm={confirmSmsSend}
+            onOpenChange={setSmsConfirmOpen}
+         />
       </div>
    );
 }

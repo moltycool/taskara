@@ -29,6 +29,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { DescriptionEditor } from '@/components/taskara/description-editor';
+import { SmsConfirmDialog } from '@/components/taskara/sms-confirm-dialog';
 import { TaskDueDateControl } from '@/components/taskara/task-due-date-control';
 import {
    LinearAvatar,
@@ -164,6 +165,7 @@ export function IssuePage() {
    const [aiApplying, setAiApplying] = useState(false);
    const [commentSubmitting, setCommentSubmitting] = useState(false);
    const [smsSending, setSmsSending] = useState<SmsSendingKind | null>(null);
+   const [smsConfirmKind, setSmsConfirmKind] = useState<SmsSendingKind | null>(null);
    const titleFocusedRef = useRef(false);
    const descriptionFocusedRef = useRef(false);
    const descriptionFileInputRef = useRef<HTMLInputElement>(null);
@@ -616,6 +618,18 @@ export function IssuePage() {
       }
    }
 
+   function requestSendTaskSms(kind: SmsSendingKind) {
+      if (smsSending) return;
+      setSmsConfirmKind(kind);
+   }
+
+   function confirmSendTaskSms() {
+      if (!smsConfirmKind) return;
+      const kind = smsConfirmKind;
+      setSmsConfirmKind(null);
+      void sendTaskSms(kind);
+   }
+
    if (loading) return <div className="p-4 text-sm text-zinc-500">{fa.app.loading}</div>;
 
    if (error || !task) {
@@ -928,7 +942,7 @@ export function IssuePage() {
                         <DropdownMenuItem
                            className="h-9 cursor-pointer justify-start gap-2 rounded-lg px-2.5 text-sm text-zinc-200 focus:bg-white/[0.07] focus:text-zinc-100"
                            disabled={Boolean(smsSending)}
-                           onSelect={() => void sendTaskSms('taskCreated')}
+                           onSelect={() => requestSendTaskSms('taskCreated')}
                         >
                            {smsSending === 'taskCreated' ? (
                               <Loader2 className="size-4 animate-spin text-zinc-400" />
@@ -940,7 +954,7 @@ export function IssuePage() {
                         <DropdownMenuItem
                            className="h-9 cursor-pointer justify-start gap-2 rounded-lg px-2.5 text-sm text-zinc-200 focus:bg-white/[0.07] focus:text-zinc-100"
                            disabled={Boolean(smsSending)}
-                           onSelect={() => void sendTaskSms('followUp')}
+                           onSelect={() => requestSendTaskSms('followUp')}
                         >
                            {smsSending === 'followUp' ? (
                               <Loader2 className="size-4 animate-spin text-zinc-400" />
@@ -1153,6 +1167,17 @@ export function IssuePage() {
                </div>
             </SidebarSection>
          </aside>
+         <SmsConfirmDialog
+            confirmLabel={fa.app.confirm}
+            description={fa.app.smsConfirmDescription}
+            open={Boolean(smsConfirmKind)}
+            pending={Boolean(smsSending)}
+            title={smsConfirmKind === 'followUp' ? fa.issue.sendTaskFollowUpSms : fa.issue.sendTaskSms}
+            onConfirm={confirmSendTaskSms}
+            onOpenChange={(open) => {
+               if (!open) setSmsConfirmKind(null);
+            }}
+         />
       </div>
    );
 }

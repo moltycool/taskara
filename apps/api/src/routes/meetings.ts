@@ -4,10 +4,11 @@ import { createMeetingSchema, createMeetingTasksSchema, meetingListQuerySchema, 
 import { getRequestActor, isWorkspaceAdminRole } from '../services/actor';
 import { assertActorCanAccessTeamSlug } from '../services/team-access';
 import {
-  canAccessMeeting,
+  buildMeetingAccessWhere,
   createMeeting,
   createTasksFromMeeting,
   meetingInclude,
+  resolveMeetingAccessScope,
   sendMeetingSms,
   updateMeeting
 } from '../services/meetings';
@@ -17,6 +18,7 @@ export async function registerMeetingRoutes(app: FastifyInstance): Promise<void>
     const actor = await getRequestActor(request);
     const query = meetingListQuerySchema.parse(request.query);
     const isAdmin = isWorkspaceAdminRole(actor.role);
+    const accessScope = await resolveMeetingAccessScope(actor);
 
     const where: Prisma.MeetingWhereInput = {
       workspaceId: actor.workspace.id,
@@ -28,13 +30,10 @@ export async function registerMeetingRoutes(app: FastifyInstance): Promise<void>
       where.team = { workspaceId: actor.workspace.id, slug: query.teamId };
     }
 
-    if (!isAdmin || query.mine) {
-      where.OR = [
-        { ownerId: actor.user.id },
-        { createdById: actor.user.id },
-        { participants: { some: { userId: actor.user.id } } }
-      ];
-    }
+    where.AND = [
+      ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+      buildMeetingAccessWhere(actor, accessScope, { mineOnly: query.mine })
+    ];
 
     if (query.q) {
       where.AND = [
@@ -71,13 +70,17 @@ export async function registerMeetingRoutes(app: FastifyInstance): Promise<void>
 
   app.get('/meetings/:id', async (request, reply) => {
     const actor = await getRequestActor(request);
+    const accessScope = await resolveMeetingAccessScope(actor);
     const { id } = request.params as { id: string };
     const meeting = await prisma.meeting.findFirst({
-      where: { id, workspaceId: actor.workspace.id },
+      where: {
+        id,
+        workspaceId: actor.workspace.id,
+        AND: [buildMeetingAccessWhere(actor, accessScope)]
+      },
       include: meetingInclude
     });
     if (!meeting) return reply.code(404).send({ message: 'Meeting not found' });
-    if (!canAccessMeeting(actor, meeting)) return reply.code(403).send({ message: 'Meeting access denied' });
     return meeting;
   });
 

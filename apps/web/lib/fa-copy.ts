@@ -12,6 +12,8 @@ export const fa = {
       more: 'بیشتر',
       search: 'جستجو',
       create: 'ایجاد',
+      confirm: 'تایید',
+      smsConfirmDescription: 'از ارسال پیامک مطمئن هستید؟',
    },
    nav: {
       inbox: 'صندوق ورودی',

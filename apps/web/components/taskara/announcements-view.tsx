@@ -17,6 +17,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { LinearAvatar } from '@/components/taskara/linear-ui';
+import { SmsConfirmDialog } from '@/components/taskara/sms-confirm-dialog';
 import { UserMultiSelectCombobox } from '@/components/taskara/user-multi-select-combobox';
 import { formatJalaliDateTime } from '@/lib/jalali';
 import { dispatchWorkspaceRefresh, useLiveRefresh } from '@/lib/live-refresh';
@@ -50,6 +51,7 @@ export function AnnouncementsView() {
    const [draftRecipientIds, setDraftRecipientIds] = useState<string[]>([]);
    const [publishSubmitting, setPublishSubmitting] = useState(false);
    const [smsSending, setSmsSending] = useState(false);
+   const [smsConfirmOpen, setSmsConfirmOpen] = useState(false);
    const selectedRecipient = announcementRecipientForUser(selected, currentUserId);
    const selectedIsRead = Boolean(selectedRecipient?.readAt);
    const selectedCanMarkRead = Boolean(selectedRecipient && !selectedRecipient.readAt);
@@ -152,6 +154,16 @@ export function AnnouncementsView() {
       } finally {
          setSmsSending(false);
       }
+   }
+
+   function requestSmsSend() {
+      if (!selected || smsSending) return;
+      setSmsConfirmOpen(true);
+   }
+
+   function confirmSmsSend() {
+      setSmsConfirmOpen(false);
+      void sendSms();
    }
 
    async function publishDraft() {
@@ -257,7 +269,7 @@ export function AnnouncementsView() {
                                  <Check className="size-4" />
                                  {selectedIsRead ? fa.announcement.read : fa.announcement.markRead}
                               </Button>
-                              <Button size="sm" variant="ghost" className="h-8 gap-2 rounded-full text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100" disabled={smsSending} onClick={() => void sendSms()}>
+                              <Button size="sm" variant="ghost" className="h-8 gap-2 rounded-full text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100" disabled={smsSending} onClick={requestSmsSend}>
                                  {smsSending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
                                  {fa.announcement.sendSms}
                               </Button>
@@ -401,6 +413,15 @@ export function AnnouncementsView() {
                </form>
             </DialogContent>
          </Dialog>
+         <SmsConfirmDialog
+            confirmLabel={fa.app.confirm}
+            description={fa.app.smsConfirmDescription}
+            open={smsConfirmOpen}
+            pending={smsSending}
+            title={fa.announcement.sendSms}
+            onConfirm={confirmSmsSend}
+            onOpenChange={setSmsConfirmOpen}
+         />
       </div>
    );
 }

@@ -19,6 +19,7 @@ import {
    MoreHorizontal,
    Paperclip,
    Send,
+   Sparkles,
    Tag,
    X,
 } from 'lucide-react';
@@ -26,6 +27,7 @@ import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { DescriptionEditor } from '@/components/taskara/description-editor';
 import { TaskDueDateControl } from '@/components/taskara/task-due-date-control';
 import {
@@ -39,6 +41,7 @@ import {
 } from '@/components/taskara/linear-ui';
 import { fa } from '@/lib/fa-copy';
 import { formatJalaliDateTime } from '@/lib/jalali';
+import { editorValueToPlainText, suggestTaskText, type TaskTextSuggestionResult } from '@/lib/task-text-ai';
 import { taskaraRequest, uploadTaskAttachment, uploadTaskCommentAttachment } from '@/lib/taskara-client';
 import { sendTaskSyncMutation, useTaskSyncPulse } from '@/lib/task-sync';
 import { useWorkspaceTaskSync } from '@/lib/task-sync-provider';
@@ -156,6 +159,9 @@ export function IssuePage() {
    const [error, setError] = useState('');
    const [savingField, setSavingField] = useState<SavingField>(null);
    const [descriptionUploading, setDescriptionUploading] = useState(false);
+   const [aiSuggestionLoading, setAiSuggestionLoading] = useState(false);
+   const [aiSuggestion, setAiSuggestion] = useState<TaskTextSuggestionResult | null>(null);
+   const [aiApplying, setAiApplying] = useState(false);
    const [commentSubmitting, setCommentSubmitting] = useState(false);
    const [smsSending, setSmsSending] = useState<SmsSendingKind | null>(null);
    const titleFocusedRef = useRef(false);
@@ -215,6 +221,8 @@ export function IssuePage() {
       setTask(cachedTask);
       if (!titleFocusedRef.current) setTitleDraft(cachedTask.title);
       if (!descriptionFocusedRef.current) setDescriptionDraft(cachedTask.description || '');
+      setAiSuggestion(null);
+      setAiSuggestionLoading(false);
       setLoading(false);
    }, [cachedTask]);
 
@@ -375,6 +383,71 @@ export function IssuePage() {
          if (updated) setDescriptionDraft(updated.description || '');
       } finally {
          setSavingField(null);
+      }
+   }
+
+   async function requestAiSuggestion() {
+      if (aiSuggestionLoading) return;
+      const title = titleDraft.trim();
+      const description = editorValueToPlainText(descriptionDraft);
+      if (!title && !description) {
+         toast.error('ابتدا عنوان یا توضیحی برای بهبود وارد کنید.');
+         return;
+      }
+
+      setAiSuggestionLoading(true);
+      try {
+         const suggestion = await suggestTaskText({ title, description });
+         if (!suggestion.titleSuggestion && !suggestion.descriptionSuggestion && !suggestion.summarySuggestion) {
+            toast.message('پیشنهاد جدیدی برای این متن پیدا نشد.');
+         }
+         setAiSuggestion(suggestion);
+      } catch (err) {
+         toast.error(err instanceof Error ? err.message : 'دریافت پیشنهاد AI ناموفق بود.');
+      } finally {
+         setAiSuggestionLoading(false);
+      }
+   }
+
+   async function applyAiSuggestion(
+      next: Partial<Pick<TaskTextSuggestionResult, 'titleSuggestion' | 'descriptionSuggestion'>>
+   ) {
+      if (!task || aiApplying) return;
+      const patch: TaskUpdatePatch = {};
+      let nextTitleDraft = titleDraft;
+      let nextDescriptionDraft = descriptionDraft;
+
+      if ('titleSuggestion' in next) {
+         const currentTitle = task.title.trim();
+         const nextTitle = (next.titleSuggestion ?? '').trim();
+         if (nextTitle && nextTitle !== currentTitle) patch.title = nextTitle;
+         nextTitleDraft = nextTitle || nextTitleDraft;
+      }
+
+      if ('descriptionSuggestion' in next) {
+         const currentDescription = task.description?.trim() || '';
+         const nextDescription = (next.descriptionSuggestion ?? '').trim();
+         if (nextDescription !== currentDescription) patch.description = nextDescription || null;
+         nextDescriptionDraft = nextDescription;
+      }
+
+      if (!Object.keys(patch).length) {
+         toast.message('تغییری برای اعمال وجود ندارد.');
+         return;
+      }
+
+      setAiApplying(true);
+      try {
+         if ('titleSuggestion' in next) setTitleDraft(nextTitleDraft);
+         if ('descriptionSuggestion' in next) setDescriptionDraft(nextDescriptionDraft);
+         const updated = await updateTask(patch);
+         if (updated) {
+            if ('titleSuggestion' in next) setTitleDraft(updated.title);
+            if ('descriptionSuggestion' in next) setDescriptionDraft(updated.description || '');
+            toast.success('پیشنهاد AI اعمال شد.');
+         }
+      } finally {
+         setAiApplying(false);
       }
    }
 
@@ -576,27 +649,48 @@ export function IssuePage() {
                <span className="ltr text-sm font-medium text-zinc-500">{task.key}</span>
             </div>
 
-            <div className="relative">
-               <input
-                  className="w-full border-0 bg-transparent p-0 text-2xl font-semibold leading-8 text-zinc-100 outline-none placeholder:text-zinc-600"
-                  dir="auto"
-                  value={titleDraft}
-                  onFocus={() => {
-                     titleFocusedRef.current = true;
-                  }}
-                  onBlur={() => {
-                     titleFocusedRef.current = false;
-                     void saveTitleDraft();
-                  }}
-                  onChange={(event) => setTitleDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                     if (event.key === 'Enter') event.currentTarget.blur();
-                  }}
-                  placeholder={fa.issue.titlePlaceholder}
-               />
-               {savingField === 'title' ? (
-                  <Loader2 className="absolute left-0 top-3 size-4 animate-spin text-zinc-500" />
-               ) : null}
+            <div className="flex items-start gap-3">
+               <div className="relative min-w-0 flex-1">
+                  <input
+                     className="w-full border-0 bg-transparent p-0 text-right text-2xl font-semibold leading-8 text-zinc-100 outline-none placeholder:text-zinc-600"
+                     dir="auto"
+                     value={titleDraft}
+                     onFocus={() => {
+                        titleFocusedRef.current = true;
+                     }}
+                     onBlur={() => {
+                        titleFocusedRef.current = false;
+                        void saveTitleDraft();
+                     }}
+                     onChange={(event) => setTitleDraft(event.target.value)}
+                     onKeyDown={(event) => {
+                        if (event.key === 'Enter') event.currentTarget.blur();
+                     }}
+                     placeholder={fa.issue.titlePlaceholder}
+                  />
+                  {savingField === 'title' ? (
+                     <Loader2 className="absolute left-0 top-3 size-4 animate-spin text-zinc-500" />
+                  ) : null}
+               </div>
+               <Tooltip>
+                  <TooltipTrigger asChild>
+                     <button
+                        className="inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-white/12 bg-transparent text-zinc-400 transition hover:bg-white/8 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        disabled={aiSuggestionLoading || aiApplying}
+                        type="button"
+                        onClick={() => void requestAiSuggestion()}
+                     >
+                        {aiSuggestionLoading ? (
+                           <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                           <Sparkles className="size-3.5" />
+                        )}
+                     </button>
+                  </TooltipTrigger>
+                  <TooltipContent className="border-white/10 bg-[#202023] text-zinc-200" side="bottom">
+                     بهبود و خلاصه‌سازی متن با AI
+                  </TooltipContent>
+               </Tooltip>
             </div>
 
             <section className="mt-6">
@@ -654,6 +748,105 @@ export function IssuePage() {
                      <span className="sr-only">{fa.issue.uploadAttachment}</span>
                   </button>
                </div>
+
+               {aiSuggestion ? (
+                  <div className="mt-3 rounded-xl border border-indigo-400/25 bg-indigo-500/10 p-3 text-sm">
+                     <div className="mb-2 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 text-indigo-100">
+                           <Sparkles className="size-4" />
+                           <span className="font-medium">پیشنهاد هوشمند AI</span>
+                        </div>
+                        <button
+                           className="text-xs text-zinc-400 transition hover:text-zinc-200"
+                           type="button"
+                           onClick={() => setAiSuggestion(null)}
+                        >
+                           بستن
+                        </button>
+                     </div>
+                     {aiSuggestion.titleSuggestion ? (
+                        <div className="mb-2 rounded-lg border border-white/10 bg-black/15 p-2">
+                           <div className="mb-1 text-xs text-zinc-500">عنوان پیشنهادی</div>
+                           <p className="whitespace-pre-wrap text-zinc-100">
+                              {aiSuggestion.titleSuggestion}
+                           </p>
+                        </div>
+                     ) : null}
+                     {aiSuggestion.descriptionSuggestion ? (
+                        <div className="mb-2 rounded-lg border border-white/10 bg-black/15 p-2">
+                           <div className="mb-1 text-xs text-zinc-500">متن پخته‌تر پیشنهادی</div>
+                           <p className="max-h-36 overflow-auto whitespace-pre-wrap text-zinc-200">
+                              {aiSuggestion.descriptionSuggestion}
+                           </p>
+                        </div>
+                     ) : null}
+                     {aiSuggestion.summarySuggestion ? (
+                        <div className="mb-2 rounded-lg border border-white/10 bg-black/15 p-2">
+                           <div className="mb-1 text-xs text-zinc-500">خلاصه پیشنهادی</div>
+                           <p className="max-h-24 overflow-auto whitespace-pre-wrap text-zinc-200">
+                              {aiSuggestion.summarySuggestion}
+                           </p>
+                        </div>
+                     ) : null}
+                     <div className="flex flex-wrap items-center gap-2">
+                        <button
+                           className="inline-flex h-7 items-center rounded-full border border-white/12 bg-white/6 px-3 text-xs text-zinc-100 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                           disabled={aiApplying}
+                           type="button"
+                           onClick={() =>
+                              void applyAiSuggestion({
+                                 titleSuggestion: aiSuggestion.titleSuggestion,
+                                 descriptionSuggestion: aiSuggestion.descriptionSuggestion,
+                              })
+                           }
+                        >
+                           اعمال همه پیشنهادها
+                        </button>
+                        {aiSuggestion.titleSuggestion ? (
+                           <button
+                              className="inline-flex h-7 items-center rounded-full border border-white/12 bg-white/6 px-3 text-xs text-zinc-100 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                              disabled={aiApplying}
+                              type="button"
+                              onClick={() =>
+                                 void applyAiSuggestion({
+                                    titleSuggestion: aiSuggestion.titleSuggestion,
+                                 })
+                              }
+                           >
+                              فقط عنوان
+                           </button>
+                        ) : null}
+                        {aiSuggestion.descriptionSuggestion ? (
+                           <button
+                              className="inline-flex h-7 items-center rounded-full border border-white/12 bg-white/6 px-3 text-xs text-zinc-100 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                              disabled={aiApplying}
+                              type="button"
+                              onClick={() =>
+                                 void applyAiSuggestion({
+                                    descriptionSuggestion: aiSuggestion.descriptionSuggestion,
+                                 })
+                              }
+                           >
+                              فقط متن
+                           </button>
+                        ) : null}
+                        {aiSuggestion.summarySuggestion ? (
+                           <button
+                              className="inline-flex h-7 items-center rounded-full border border-white/12 bg-white/6 px-3 text-xs text-zinc-100 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                              disabled={aiApplying}
+                              type="button"
+                              onClick={() =>
+                                 void applyAiSuggestion({
+                                    descriptionSuggestion: aiSuggestion.summarySuggestion,
+                                 })
+                              }
+                           >
+                              فقط خلاصه
+                           </button>
+                        ) : null}
+                     </div>
+                  </div>
+               ) : null}
 
                <AttachmentList attachments={attachments} className="mt-3" />
             </section>

@@ -6,6 +6,7 @@ import { ZodError } from 'zod';
 import { config } from './config';
 import { registerAgentRoutes } from './routes/agent';
 import { registerAnnouncementRoutes } from './routes/announcements';
+import { registerAiReportRoutes } from './routes/ai-reports';
 import { registerAuthRoutes } from './routes/auth';
 import { registerKnowledgeRoutes } from './routes/knowledge';
 import { registerMediaRoutes } from './routes/media';
@@ -74,6 +75,7 @@ export async function registerApp(app: FastifyInstance): Promise<void> {
   await app.register(registerViewRoutes);
   await app.register(registerMattermostRoutes);
   await app.register(registerAgentRoutes);
+  await app.register(registerAiReportRoutes);
 
   startSyncEventPoller();
 }

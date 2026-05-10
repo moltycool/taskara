@@ -27,6 +27,7 @@ import {
    Link as LinkIcon,
    LayoutGrid,
    LayoutList,
+   Loader2,
    Maximize2,
    Minimize2,
    MoreHorizontal,
@@ -37,6 +38,7 @@ import {
    Rows3,
    Save,
    Search,
+   Sparkles,
    Star,
    Tag,
    Trash2,
@@ -55,6 +57,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
    ContextMenu,
    ContextMenuContent,
@@ -88,6 +91,11 @@ import { LazyJalaliDatePicker } from '@/components/taskara/lazy-jalali-date-pick
 import { fa } from '@/lib/fa-copy';
 import { formatJalaliDateTimeInput } from '@/lib/jalali';
 import { taskaraRequest, uploadTaskAttachment } from '@/lib/taskara-client';
+import {
+   editorValueToPlainText,
+   suggestTaskText,
+   type TaskTextSuggestionResult,
+} from '@/lib/task-text-ai';
 import type { TaskUpdatePatch } from '@/lib/task-sync';
 import { useWorkspaceTaskSync } from '@/lib/task-sync-provider';
 import { useAuthSession } from '@/store/auth-store';
@@ -810,6 +818,9 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
    const [composerFiles, setComposerFiles] = useState<File[]>([]);
    const [composerSubmitting, setComposerSubmitting] = useState(false);
    const [composerDraggingFiles, setComposerDraggingFiles] = useState(false);
+   const [composerAiLoading, setComposerAiLoading] = useState(false);
+   const [composerAiSuggestion, setComposerAiSuggestion] =
+      useState<TaskTextSuggestionResult | null>(null);
    const [isPending, startTransition] = useTransition();
    const [activeViewKey, setActiveViewKey] = useState<ActiveViewKey>(`system:${defaultSystemView}`);
    const [draftView, setDraftView] = useState<TaskaraTaskViewState>(() =>
@@ -1416,6 +1427,8 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
       if (composerOpen) return;
       setComposerFiles([]);
       setComposerDraggingFiles(false);
+      setComposerAiLoading(false);
+      setComposerAiSuggestion(null);
    }, [composerOpen]);
 
    const isEditableTarget = useCallback((target: EventTarget | null) => {
@@ -1565,6 +1578,47 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
       event.preventDefault();
       addComposerFiles(files);
    };
+
+   async function suggestComposerTextWithAi() {
+      if (composerAiLoading) return;
+      const title = form.title.trim();
+      const description = editorValueToPlainText(form.description);
+
+      if (!title && !description) {
+         toast.error('ابتدا عنوان یا توضیحی برای بهبود وارد کنید.');
+         return;
+      }
+
+      setComposerAiLoading(true);
+      try {
+         const suggestion = await suggestTaskText({ title, description });
+         if (
+            !suggestion.titleSuggestion &&
+            !suggestion.descriptionSuggestion &&
+            !suggestion.summarySuggestion
+         ) {
+            toast.message('پیشنهاد جدیدی برای این متن پیدا نشد.');
+         }
+         setComposerAiSuggestion(suggestion);
+      } catch (err) {
+         toast.error(err instanceof Error ? err.message : 'دریافت پیشنهاد AI ناموفق بود.');
+      } finally {
+         setComposerAiLoading(false);
+      }
+   }
+
+   function applyComposerAiSuggestion(
+      next: Partial<Pick<TaskTextSuggestionResult, 'titleSuggestion' | 'descriptionSuggestion'>>
+   ) {
+      setForm((current) => ({
+         ...current,
+         title: 'titleSuggestion' in next ? (next.titleSuggestion ?? current.title) : current.title,
+         description:
+            'descriptionSuggestion' in next
+               ? (next.descriptionSuggestion ?? current.description)
+               : current.description,
+      }));
+   }
 
    async function handleCreateTask(event: FormEvent<HTMLFormElement>) {
       event.preventDefault();
@@ -2337,15 +2391,36 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
                         composerFullscreen && 'min-h-0 overflow-auto'
                      )}
                   >
-                     <Input
-                        autoFocus
-                        className="h-auto border-none bg-transparent px-0 text-xl leading-7 font-semibold text-zinc-100 shadow-none outline-none placeholder:text-zinc-600 focus-visible:ring-0"
-                        value={form.title}
-                        onChange={(event) =>
-                           setForm((current) => ({ ...current, title: event.target.value }))
-                        }
-                        placeholder={fa.issue.titlePlaceholder}
-                     />
+                     <div className="flex items-start gap-3">
+                        <Input
+                           autoFocus
+                           className="h-auto flex-1 border-none bg-transparent px-0 text-right text-xl leading-7 font-semibold text-zinc-100 shadow-none outline-none placeholder:text-zinc-600 focus-visible:ring-0"
+                           value={form.title}
+                           onChange={(event) =>
+                              setForm((current) => ({ ...current, title: event.target.value }))
+                           }
+                           placeholder={fa.issue.titlePlaceholder}
+                        />
+                        <Tooltip>
+                           <TooltipTrigger asChild>
+                              <button
+                                 className="inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-white/12 bg-transparent text-zinc-400 transition hover:bg-white/8 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                 disabled={composerSubmitting || composerAiLoading}
+                                 type="button"
+                                 onClick={() => void suggestComposerTextWithAi()}
+                              >
+                                 {composerAiLoading ? (
+                                    <Loader2 className="size-3.5 animate-spin" />
+                                 ) : (
+                                    <Sparkles className="size-3.5" />
+                                 )}
+                              </button>
+                           </TooltipTrigger>
+                           <TooltipContent className="border-white/10 bg-[#202023] text-zinc-200" side="bottom">
+                              بهبود و خلاصه‌سازی متن با AI
+                           </TooltipContent>
+                        </Tooltip>
+                     </div>
                      <DescriptionEditor
                         className="mt-2"
                         contentClassName="min-h-20 text-right text-sm leading-6 text-zinc-300"
@@ -2362,6 +2437,106 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
                         files={composerFiles}
                         onRemove={removeComposerFile}
                      />
+                     {composerAiSuggestion ? (
+                        <div className="mt-3 rounded-xl border border-indigo-400/25 bg-indigo-500/10 p-3 text-sm">
+                           <div className="mb-2 flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-1.5 text-indigo-100">
+                                 <Sparkles className="size-4" />
+                                 <span className="font-medium">پیشنهاد هوشمند AI</span>
+                              </div>
+                              <button
+                                 className="text-xs text-zinc-400 transition hover:text-zinc-200"
+                                 type="button"
+                                 onClick={() => setComposerAiSuggestion(null)}
+                              >
+                                 بستن
+                              </button>
+                           </div>
+                           {composerAiSuggestion.titleSuggestion ? (
+                              <div className="mb-2 rounded-lg border border-white/10 bg-black/15 p-2">
+                                 <div className="mb-1 text-xs text-zinc-500">عنوان پیشنهادی</div>
+                                 <p className="whitespace-pre-wrap text-zinc-100">
+                                    {composerAiSuggestion.titleSuggestion}
+                                 </p>
+                              </div>
+                           ) : null}
+                           {composerAiSuggestion.descriptionSuggestion ? (
+                              <div className="mb-2 rounded-lg border border-white/10 bg-black/15 p-2">
+                                 <div className="mb-1 text-xs text-zinc-500">
+                                    متن پخته‌تر پیشنهادی
+                                 </div>
+                                 <p className="max-h-36 overflow-auto whitespace-pre-wrap text-zinc-200">
+                                    {composerAiSuggestion.descriptionSuggestion}
+                                 </p>
+                              </div>
+                           ) : null}
+                           {composerAiSuggestion.summarySuggestion ? (
+                              <div className="mb-2 rounded-lg border border-white/10 bg-black/15 p-2">
+                                 <div className="mb-1 text-xs text-zinc-500">خلاصه پیشنهادی</div>
+                                 <p className="max-h-24 overflow-auto whitespace-pre-wrap text-zinc-200">
+                                    {composerAiSuggestion.summarySuggestion}
+                                 </p>
+                              </div>
+                           ) : null}
+                           <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                 className="inline-flex h-7 items-center rounded-full border border-white/12 bg-white/6 px-3 text-xs text-zinc-100 transition hover:bg-white/10"
+                                 type="button"
+                                 onClick={() =>
+                                    applyComposerAiSuggestion({
+                                       titleSuggestion: composerAiSuggestion.titleSuggestion,
+                                       descriptionSuggestion:
+                                          composerAiSuggestion.descriptionSuggestion,
+                                    })
+                                 }
+                              >
+                                 اعمال همه پیشنهادها
+                              </button>
+                              {composerAiSuggestion.titleSuggestion ? (
+                                 <button
+                                    className="inline-flex h-7 items-center rounded-full border border-white/12 bg-white/6 px-3 text-xs text-zinc-100 transition hover:bg-white/10"
+                                    type="button"
+                                    onClick={() =>
+                                       applyComposerAiSuggestion({
+                                          titleSuggestion:
+                                             composerAiSuggestion.titleSuggestion,
+                                       })
+                                    }
+                                 >
+                                    فقط عنوان
+                                 </button>
+                              ) : null}
+                              {composerAiSuggestion.descriptionSuggestion ? (
+                                 <button
+                                    className="inline-flex h-7 items-center rounded-full border border-white/12 bg-white/6 px-3 text-xs text-zinc-100 transition hover:bg-white/10"
+                                    type="button"
+                                    onClick={() =>
+                                       applyComposerAiSuggestion({
+                                          descriptionSuggestion:
+                                             composerAiSuggestion.descriptionSuggestion,
+                                       })
+                                    }
+                                 >
+                                    فقط متن
+                                 </button>
+                              ) : null}
+                              {composerAiSuggestion.summarySuggestion ? (
+                                 <button
+                                    className="inline-flex h-7 items-center rounded-full border border-white/12 bg-white/6 px-3 text-xs text-zinc-100 transition hover:bg-white/10"
+                                    type="button"
+                                    onClick={() =>
+                                       applyComposerAiSuggestion({
+                                          descriptionSuggestion:
+                                             composerAiSuggestion.summarySuggestion,
+                                       })
+                                    }
+                                 >
+                                    فقط خلاصه
+                                 </button>
+                              ) : null}
+                           </div>
+                        </div>
+                     ) : null}
                      <div className="mt-auto flex flex-wrap items-center gap-1.5 pb-4">
                         <ComposerSelectPill
                            ariaLabel={fa.issue.status}

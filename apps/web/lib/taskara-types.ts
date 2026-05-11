@@ -60,6 +60,21 @@ export interface TaskaraAnnouncement {
       createdAt: string;
       user: { id: string; name: string; email: string; phone?: string | null; avatarUrl?: string | null };
    }>;
+   poll?: {
+      id: string;
+      question: string;
+      allowMultiple: boolean;
+      createdAt: string;
+      updatedAt: string;
+      options: Array<{
+         id: string;
+         label: string;
+         position: number;
+         createdAt: string;
+         _count?: { votes?: number };
+      }>;
+   } | null;
+   pollVoteOptionIds?: string[];
    _count?: { recipients?: number };
 }
 

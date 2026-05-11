@@ -1,6 +1,6 @@
 import { prisma, type Prisma } from '@taskara/db';
 import type { z } from 'zod';
-import type { createAnnouncementSchema, updateAnnouncementSchema } from '@taskara/shared';
+import type { announcementPollVoteSchema, createAnnouncementSchema, updateAnnouncementSchema } from '@taskara/shared';
 import { config } from '../config';
 import type { RequestActor } from './actor';
 import { isWorkspaceAdminRole } from './actor';
@@ -14,6 +14,7 @@ import { sendMessageSimple } from './sms';
 
 type CreateAnnouncementInput = z.infer<typeof createAnnouncementSchema>;
 type UpdateAnnouncementInput = z.infer<typeof updateAnnouncementSchema>;
+type VoteAnnouncementPollInput = z.infer<typeof announcementPollVoteSchema>;
 
 const userSelect = {
   id: true,
@@ -29,8 +30,21 @@ export const announcementInclude = {
     orderBy: { createdAt: 'asc' },
     include: { user: { select: userSelect } }
   },
+  poll: {
+    include: {
+      options: {
+        orderBy: { position: 'asc' },
+        include: {
+          _count: { select: { votes: true } }
+        }
+      }
+    }
+  },
   _count: { select: { recipients: true } }
 } satisfies Prisma.AnnouncementInclude;
+
+type AnnouncementRecord = Prisma.AnnouncementGetPayload<{ include: typeof announcementInclude }>;
+export type AnnouncementWithPollVoteState = AnnouncementRecord & { pollVoteOptionIds: string[] };
 
 export function canManageAnnouncement(actor: RequestActor, creatorId?: string | null): boolean {
   return isWorkspaceAdminRole(actor.role) || creatorId === actor.user.id;
@@ -66,6 +80,24 @@ export async function createAnnouncement(actor: RequestActor, input: CreateAnnou
       });
     }
 
+    if (input.poll) {
+      await tx.announcementPoll.create({
+        data: {
+          workspaceId: actor.workspace.id,
+          announcementId: created.id,
+          question: input.poll.question,
+          allowMultiple: input.poll.allowMultiple,
+          options: {
+            create: input.poll.options.map((option, index) => ({
+              workspaceId: actor.workspace.id,
+              label: option,
+              position: index
+            }))
+          }
+        }
+      });
+    }
+
     const announcement = await tx.announcement.findUniqueOrThrow({
       where: { id: created.id },
       include: announcementInclude
@@ -95,7 +127,7 @@ export async function createAnnouncement(actor: RequestActor, input: CreateAnnou
     source: actor.source
   }).catch(() => undefined);
 
-  return announcement;
+  return attachPollVoteOptionIdsForSingleAnnouncement(actor.user.id, announcement);
 }
 
 export async function updateAnnouncement(actor: RequestActor, announcementId: string, input: UpdateAnnouncementInput) {
@@ -161,7 +193,7 @@ export async function updateAnnouncement(actor: RequestActor, announcementId: st
     source: actor.source
   }).catch(() => undefined);
 
-  return announcement;
+  return attachPollVoteOptionIdsForSingleAnnouncement(actor.user.id, announcement);
 }
 
 export async function publishAnnouncement(actor: RequestActor, announcementId: string) {
@@ -197,10 +229,11 @@ export async function markAnnouncementRead(actor: RequestActor, announcementId: 
     data: { readAt }
   });
 
-  return prisma.announcement.findFirstOrThrow({
+  const announcement = await prisma.announcement.findFirstOrThrow({
     where: { id: announcementId, workspaceId: actor.workspace.id },
     include: announcementInclude
   });
+  return attachPollVoteOptionIdsForSingleAnnouncement(actor.user.id, announcement);
 }
 
 export async function sendAnnouncementSms(actor: RequestActor, announcementId: string) {
@@ -251,6 +284,127 @@ export async function sendAnnouncementSms(actor: RequestActor, announcementId: s
   }).catch(() => undefined);
 
   return summary;
+}
+
+export async function voteAnnouncementPoll(actor: RequestActor, announcementId: string, input: VoteAnnouncementPollInput) {
+  const announcement = await prisma.announcement.findFirst({
+    where: { id: announcementId, workspaceId: actor.workspace.id },
+    include: announcementInclude
+  });
+  if (!announcement) throw new HttpError(404, 'Announcement not found');
+
+  const isRecipient = announcement.recipients.some((recipient) => recipient.userId === actor.user.id);
+  if (!isRecipient && !canManageAnnouncement(actor, announcement.creatorId)) {
+    throw new HttpError(403, 'Announcement access denied');
+  }
+  if (!isRecipient) {
+    throw new HttpError(403, 'Only recipients can vote in announcement polls');
+  }
+  if (announcement.status !== 'PUBLISHED') {
+    throw new HttpError(400, 'Only published announcement polls can be voted on');
+  }
+  if (!announcement.poll) {
+    throw new HttpError(400, 'Announcement has no poll');
+  }
+  const poll = announcement.poll;
+  if (!poll.allowMultiple && input.optionIds.length > 1) {
+    throw new HttpError(400, 'This poll allows only one selected option');
+  }
+
+  const optionIdSet = new Set(poll.options.map((option) => option.id));
+  if (input.optionIds.some((optionId) => !optionIdSet.has(optionId))) {
+    throw new HttpError(400, 'All selected options must belong to this poll');
+  }
+
+  const selectedOptionIds = [...new Set(input.optionIds)];
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.announcementPollVote.deleteMany({
+      where: {
+        workspaceId: actor.workspace.id,
+        pollId: poll.id,
+        userId: actor.user.id
+      }
+    });
+    await tx.announcementPollVote.createMany({
+      data: selectedOptionIds.map((optionId) => ({
+        workspaceId: actor.workspace.id,
+        pollId: poll.id,
+        optionId,
+        userId: actor.user.id
+      })),
+      skipDuplicates: true
+    });
+
+    return tx.announcement.findUniqueOrThrow({
+      where: { id: announcement.id },
+      include: announcementInclude
+    });
+  });
+
+  await logActivity({
+    workspaceId: actor.workspace.id,
+    actorId: actor.user.id,
+    actorType: actor.actorType,
+    entityType: 'announcement',
+    entityId: announcement.id,
+    action: 'poll_voted',
+    after: {
+      pollId: poll.id,
+      selectedOptionIds
+    },
+    source: actor.source
+  }).catch(() => undefined);
+
+  return attachPollVoteOptionIdsForSingleAnnouncement(actor.user.id, updated);
+}
+
+export async function attachPollVoteOptionIdsForUser(
+  userId: string,
+  announcements: AnnouncementRecord[]
+): Promise<AnnouncementWithPollVoteState[]> {
+  const pollIds = [
+    ...new Set(
+      announcements
+        .map((announcement) => announcement.poll?.id || null)
+        .filter((pollId): pollId is string => Boolean(pollId))
+    )
+  ];
+  if (!pollIds.length) {
+    return announcements.map((announcement) => ({ ...announcement, pollVoteOptionIds: [] }));
+  }
+
+  const votes = await prisma.announcementPollVote.findMany({
+    where: {
+      pollId: { in: pollIds },
+      userId
+    },
+    select: {
+      pollId: true,
+      optionId: true
+    }
+  });
+  const voteMap = new Map<string, string[]>();
+  votes.forEach((vote) => {
+    const current = voteMap.get(vote.pollId);
+    if (current) {
+      current.push(vote.optionId);
+    } else {
+      voteMap.set(vote.pollId, [vote.optionId]);
+    }
+  });
+
+  return announcements.map((announcement) => ({
+    ...announcement,
+    pollVoteOptionIds: announcement.poll ? voteMap.get(announcement.poll.id) || [] : []
+  }));
+}
+
+export async function attachPollVoteOptionIdsForSingleAnnouncement(
+  userId: string,
+  announcement: AnnouncementRecord
+): Promise<AnnouncementWithPollVoteState> {
+  const hydrated = await attachPollVoteOptionIdsForUser(userId, [announcement]);
+  return hydrated[0]!;
 }
 
 async function createAnnouncementNotifications(

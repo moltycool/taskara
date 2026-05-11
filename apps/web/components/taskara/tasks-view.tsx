@@ -89,7 +89,7 @@ import {
    makeEndOfIranWorkWeek,
 } from '@/components/taskara/task-due-date-control';
 import { fa } from '@/lib/fa-copy';
-import { taskaraRequest, uploadTaskAttachment } from '@/lib/taskara-client';
+import { taskaraRequest, uploadMedia, uploadTaskAttachment } from '@/lib/taskara-client';
 import {
    editorValueToPlainText,
    suggestTaskText,
@@ -1578,6 +1578,40 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
       addComposerFiles(files);
    };
 
+   const uploadComposerInlineAssets = useCallback(async (files: File[]) => {
+      if (!files.length) return [];
+      return await Promise.all(files.map((file) => uploadMedia(file, file.name)));
+   }, []);
+
+   const uploadComposerInlineImages = useCallback(
+      async (files: File[]) => {
+         const uploaded = await uploadComposerInlineAssets(files);
+         return uploaded.map((asset) => ({
+            altText: asset.name,
+            src: asset.url,
+         }));
+      },
+      [uploadComposerInlineAssets]
+   );
+
+   const uploadComposerInlineFiles = useCallback(
+      async (files: File[]) => {
+         const uploaded = await uploadComposerInlineAssets(files);
+         return uploaded.map((asset) => ({
+            kind:
+               (asset.mimeType || '').toLowerCase().startsWith('audio/') ||
+               (asset.mimeType || '').toLowerCase().startsWith('video/')
+                  ? ('media' as const)
+                  : ('file' as const),
+            mimeType: asset.mimeType,
+            name: asset.name,
+            sizeBytes: asset.sizeBytes,
+            src: asset.url,
+         }));
+      },
+      [uploadComposerInlineAssets]
+   );
+
    async function suggestComposerTextWithAi() {
       if (composerAiLoading) return;
       const title = form.title.trim();
@@ -2424,12 +2458,20 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
                         className="mt-2"
                         contentClassName="min-h-20 text-right text-sm leading-6 text-zinc-300"
                         showToolbar={false}
+                        uploadInlineFiles={uploadComposerInlineFiles}
+                        uploadInlineImages={uploadComposerInlineImages}
                         value={form.description}
                         variant="plain"
                         users={users}
                         onChange={(description) =>
                            setForm((current) => ({ ...current, description }))
                         }
+                        onInlineFileUploadError={(err) => {
+                           toast.error(err instanceof Error ? err.message : fa.issue.attachmentUploadFailed);
+                        }}
+                        onInlineImageUploadError={(err) => {
+                           toast.error(err instanceof Error ? err.message : fa.issue.attachmentUploadFailed);
+                        }}
                         placeholder={fa.issue.descriptionPlaceholder}
                      />
                      <ComposerAttachmentPreviewList

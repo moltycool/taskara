@@ -83,6 +83,84 @@ export function taskInboxNotificationWhere(
   };
 }
 
+type InboxNotificationThreadEntity = {
+  id: string;
+  taskId?: string | null;
+  announcementId?: string | null;
+  meetingId?: string | null;
+  knowledgePageId?: string | null;
+};
+
+export type InboxNotificationThreadRecord = InboxNotificationThreadEntity & {
+  createdAt: Date | string;
+  readAt?: Date | string | null;
+};
+
+export type CollapsedInboxNotificationThread<T extends InboxNotificationThreadRecord = InboxNotificationThreadRecord> = {
+  threadKey: string;
+  latest: T;
+  hasUnread: boolean;
+};
+
+export function collapseInboxNotificationsByThread<T extends InboxNotificationThreadRecord>(
+  notifications: T[]
+): Array<CollapsedInboxNotificationThread<T>> {
+  const sorted = [...notifications].sort(compareInboxNotificationsByRecency);
+  const threadMap = new Map<string, CollapsedInboxNotificationThread<T>>();
+
+  for (const notification of sorted) {
+    const threadKey = inboxNotificationThreadKey(notification);
+    const existing = threadMap.get(threadKey);
+
+    if (!existing) {
+      threadMap.set(threadKey, {
+        threadKey,
+        latest: notification,
+        hasUnread: !notification.readAt
+      });
+      continue;
+    }
+
+    if (!notification.readAt) existing.hasUnread = true;
+  }
+
+  return [...threadMap.values()];
+}
+
+export function inboxNotificationThreadScope(
+  notification: InboxNotificationThreadEntity
+): Prisma.NotificationWhereInput {
+  if (notification.taskId) return { taskId: notification.taskId };
+  if (notification.announcementId) return { announcementId: notification.announcementId };
+  if (notification.meetingId) return { meetingId: notification.meetingId };
+  if (notification.knowledgePageId) return { knowledgePageId: notification.knowledgePageId };
+  return { id: notification.id };
+}
+
+function inboxNotificationThreadKey(notification: InboxNotificationThreadEntity): string {
+  if (notification.taskId) return `task:${notification.taskId}`;
+  if (notification.announcementId) return `announcement:${notification.announcementId}`;
+  if (notification.meetingId) return `meeting:${notification.meetingId}`;
+  if (notification.knowledgePageId) return `knowledge:${notification.knowledgePageId}`;
+  return `notification:${notification.id}`;
+}
+
+function compareInboxNotificationsByRecency(
+  left: InboxNotificationThreadRecord,
+  right: InboxNotificationThreadRecord
+): number {
+  const leftTime = notificationTimestamp(left.createdAt);
+  const rightTime = notificationTimestamp(right.createdAt);
+  if (leftTime !== rightTime) return rightTime - leftTime;
+  return right.id.localeCompare(left.id);
+}
+
+function notificationTimestamp(value: Date | string): number {
+  if (value instanceof Date) return value.getTime();
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 type MentionNotificationTask = {
   id: string;
   key: string;

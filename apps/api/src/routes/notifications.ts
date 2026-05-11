@@ -4,7 +4,9 @@ import { prisma } from '@taskara/db';
 import { z } from 'zod';
 import { getRequestActor } from '../services/actor';
 import {
+  collapseInboxNotificationsByThread,
   encodeNotificationCursor,
+  inboxNotificationThreadScope,
   parseNotificationCursor,
   taskInboxNotificationWhere
 } from '../services/notifications';
@@ -24,6 +26,44 @@ const notificationDeliveredBodySchema = z.object({
   ids: z.array(z.string().uuid()).min(1).max(200)
 });
 
+const notificationEntityInclude = {
+  task: {
+    select: {
+      id: true,
+      key: true,
+      title: true,
+      status: true,
+      priority: true
+    }
+  },
+  announcement: {
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      publishedAt: true
+    }
+  },
+  meeting: {
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      scheduledAt: true,
+      heldAt: true
+    }
+  },
+  knowledgePage: {
+    select: {
+      id: true,
+      title: true,
+      path: true,
+      status: true,
+      updatedAt: true
+    }
+  }
+} satisfies Prisma.NotificationInclude;
+
 export async function registerNotificationRoutes(app: FastifyInstance): Promise<void> {
   app.get('/notifications', async (request) => {
     const actor = await getRequestActor(request);
@@ -33,55 +73,42 @@ export async function registerNotificationRoutes(app: FastifyInstance): Promise<
       unreadOnly: query.unread
     });
 
-    const [items, total, unreadCount] = await Promise.all([
-      prisma.notification.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        take: query.limit,
-        skip: query.offset,
-        include: {
-          task: {
-            select: {
-              id: true,
-              key: true,
-              title: true,
-              status: true,
-              priority: true
-            }
-          },
-          announcement: {
-            select: {
-              id: true,
-              title: true,
-              status: true,
-              publishedAt: true
-            }
-          },
-          meeting: {
-            select: {
-              id: true,
-              title: true,
-              status: true,
-              scheduledAt: true,
-              heldAt: true
-            }
-          },
-          knowledgePage: {
-            select: {
-              id: true,
-              title: true,
-              path: true,
-              status: true,
-              updatedAt: true
-            }
-          }
-        }
-      }),
-      prisma.notification.count({ where }),
-      prisma.notification.count({
-        where: taskInboxNotificationWhere(actor.workspace.id, actor.user.id, { unreadOnly: true })
-      })
-    ]);
+    const threadRows = await prisma.notification.findMany({
+      where,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      select: {
+        id: true,
+        createdAt: true,
+        readAt: true,
+        taskId: true,
+        announcementId: true,
+        meetingId: true,
+        knowledgePageId: true
+      }
+    });
+
+    const collapsedThreads = collapseInboxNotificationsByThread(threadRows);
+    const total = collapsedThreads.length;
+    const unreadCount = collapsedThreads.reduce((count, thread) => count + (thread.hasUnread ? 1 : 0), 0);
+    const pagedThreads = collapsedThreads.slice(query.offset, query.offset + query.limit);
+    const pageIds = pagedThreads.map((thread) => thread.latest.id);
+
+    if (!pageIds.length) {
+      return { items: [], total, unreadCount, limit: query.limit, offset: query.offset };
+    }
+
+    const threadUnreadById = new Map(pagedThreads.map((thread) => [thread.latest.id, thread.hasUnread]));
+    const pageRecords = await prisma.notification.findMany({
+      where: { id: { in: pageIds } },
+      include: notificationEntityInclude
+    });
+    const pageRecordById = new Map(pageRecords.map((record) => [record.id, record]));
+    const items = pageIds.reduce<Array<(typeof pageRecords)[number]>>((rows, id) => {
+      const record = pageRecordById.get(id);
+      if (!record) return rows;
+      rows.push(threadUnreadById.get(id) ? { ...record, readAt: null } : record);
+      return rows;
+    }, []);
 
     return { items, total, unreadCount, limit: query.limit, offset: query.offset };
   });
@@ -106,53 +133,27 @@ export async function registerNotificationRoutes(app: FastifyInstance): Promise<
         }
       : baseWhere;
 
-    const [items, unreadCount] = await Promise.all([
+    const [items, unreadThreadRows] = await Promise.all([
       prisma.notification.findMany({
         where,
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         take: query.limit,
-        include: {
-          task: {
-            select: {
-              id: true,
-              key: true,
-              title: true,
-              status: true,
-              priority: true
-            }
-          },
-          announcement: {
-            select: {
-              id: true,
-              title: true,
-              status: true,
-              publishedAt: true
-            }
-          },
-          meeting: {
-            select: {
-              id: true,
-              title: true,
-              status: true,
-              scheduledAt: true,
-              heldAt: true
-            }
-          },
-          knowledgePage: {
-            select: {
-              id: true,
-              title: true,
-              path: true,
-              status: true,
-              updatedAt: true
-            }
-          }
-        }
+        include: notificationEntityInclude
       }),
-      prisma.notification.count({
-        where: taskInboxNotificationWhere(actor.workspace.id, actor.user.id, { unreadOnly: true })
+      prisma.notification.findMany({
+        where: taskInboxNotificationWhere(actor.workspace.id, actor.user.id, { unreadOnly: true }),
+        select: {
+          id: true,
+          createdAt: true,
+          readAt: true,
+          taskId: true,
+          announcementId: true,
+          meetingId: true,
+          knowledgePageId: true
+        }
       })
     ]);
+    const unreadCount = collapseInboxNotificationsByThread(unreadThreadRows).length;
 
     const last = items.at(-1);
     return {
@@ -176,10 +177,15 @@ export async function registerNotificationRoutes(app: FastifyInstance): Promise<
     if (!existing) return reply.code(404).send({ message: 'Notification not found' });
 
     const readAt = existing.readAt ?? new Date();
-    const updated = await prisma.notification.update({
-      where: { id },
+    await prisma.notification.updateMany({
+      where: {
+        ...taskInboxNotificationWhere(actor.workspace.id, actor.user.id),
+        ...inboxNotificationThreadScope(existing),
+        readAt: null
+      },
       data: { readAt }
     });
+    const updated = await prisma.notification.findUniqueOrThrow({ where: { id: existing.id } });
 
     if (existing.announcementId) {
       await prisma.announcementRecipient.updateMany({

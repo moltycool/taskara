@@ -1,15 +1,18 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma, type Prisma } from '@taskara/db';
-import { announcementListQuerySchema, createAnnouncementSchema, updateAnnouncementSchema } from '@taskara/shared';
+import { announcementListQuerySchema, announcementPollVoteSchema, createAnnouncementSchema, updateAnnouncementSchema } from '@taskara/shared';
 import { getRequestActor, isWorkspaceAdminRole, requireWorkspaceAdmin } from '../services/actor';
 import {
+  attachPollVoteOptionIdsForUser,
+  attachPollVoteOptionIdsForSingleAnnouncement,
   announcementInclude,
   canManageAnnouncement,
   createAnnouncement,
   markAnnouncementRead,
   publishAnnouncement,
   sendAnnouncementSms,
-  updateAnnouncement
+  updateAnnouncement,
+  voteAnnouncementPoll
 } from '../services/announcements';
 
 export async function registerAnnouncementRoutes(app: FastifyInstance): Promise<void> {
@@ -58,7 +61,8 @@ export async function registerAnnouncementRoutes(app: FastifyInstance): Promise<
       })
     ]);
 
-    return { items, total, unreadCount, limit: query.limit, offset: query.offset };
+    const hydratedItems = await attachPollVoteOptionIdsForUser(actor.user.id, items);
+    return { items: hydratedItems, total, unreadCount, limit: query.limit, offset: query.offset };
   });
 
   app.post('/announcements', async (request, reply) => {
@@ -82,7 +86,7 @@ export async function registerAnnouncementRoutes(app: FastifyInstance): Promise<
       return reply.code(403).send({ message: 'Announcement access denied' });
     }
 
-    return announcement;
+    return attachPollVoteOptionIdsForSingleAnnouncement(actor.user.id, announcement);
   });
 
   app.patch('/announcements/:id', async (request) => {
@@ -108,5 +112,12 @@ export async function registerAnnouncementRoutes(app: FastifyInstance): Promise<
     const actor = await getRequestActor(request);
     const { id } = request.params as { id: string };
     return sendAnnouncementSms(actor, id);
+  });
+
+  app.put('/announcements/:id/poll-vote', async (request) => {
+    const actor = await getRequestActor(request);
+    const { id } = request.params as { id: string };
+    const input = announcementPollVoteSchema.parse(request.body);
+    return voteAnnouncementPoll(actor, id, input);
   });
 }

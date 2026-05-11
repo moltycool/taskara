@@ -483,9 +483,9 @@ export function IssuePage() {
       }
    }
 
-   const uploadDescriptionInlineImages = useCallback(
+   const uploadInlineDescriptionAttachments = useCallback(
       async (files: File[]) => {
-         if (!task || files.length === 0) return [];
+         if (!task || files.length === 0) return [] as TaskaraAttachment[];
 
          setDescriptionUploading(true);
          try {
@@ -500,15 +500,41 @@ export function IssuePage() {
                };
             });
             await loadActivity(task.key);
-            return uploaded.map((attachment) => ({
-               altText: attachment.name,
-               src: attachment.url,
-            }));
+            return uploaded;
          } finally {
             setDescriptionUploading(false);
          }
       },
       [loadActivity, task]
+   );
+
+   const uploadDescriptionInlineImages = useCallback(
+      async (files: File[]) => {
+         const uploaded = await uploadInlineDescriptionAttachments(files);
+         return uploaded.map((attachment) => ({
+            altText: attachment.name,
+            src: attachment.url,
+         }));
+      },
+      [uploadInlineDescriptionAttachments]
+   );
+
+   const uploadDescriptionInlineFiles = useCallback(
+      async (files: File[]) => {
+         const uploaded = await uploadInlineDescriptionAttachments(files);
+         return uploaded.map((attachment) => ({
+            kind:
+               (attachment.mimeType || '').toLowerCase().startsWith('audio/') ||
+               (attachment.mimeType || '').toLowerCase().startsWith('video/')
+                  ? ('media' as const)
+                  : ('file' as const),
+            mimeType: attachment.mimeType || undefined,
+            name: attachment.name,
+            sizeBytes: attachment.sizeBytes ?? undefined,
+            src: attachment.url,
+         }));
+      },
+      [uploadInlineDescriptionAttachments]
    );
 
    function selectCommentFiles(event: ChangeEvent<HTMLInputElement>) {
@@ -728,6 +754,10 @@ export function IssuePage() {
                      }}
                      uploadInlineImages={uploadDescriptionInlineImages}
                      onInlineImageUploadError={(err) => {
+                        toast.error(err instanceof Error ? err.message : fa.issue.attachmentUploadFailed);
+                     }}
+                     uploadInlineFiles={uploadDescriptionInlineFiles}
+                     onInlineFileUploadError={(err) => {
                         toast.error(err instanceof Error ? err.message : fa.issue.attachmentUploadFailed);
                      }}
                      placeholder={fa.issue.descriptionPlaceholder}

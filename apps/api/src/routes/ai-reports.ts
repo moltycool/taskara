@@ -7,7 +7,7 @@ import { config } from '../config';
 import { getRequestActor, isWorkspaceAdminRole, requireWorkspaceAdmin } from '../services/actor';
 import { createAnnouncement } from '../services/announcements';
 import { HttpError } from '../services/http';
-import { canAccessMeeting, createMeeting } from '../services/meetings';
+import { canAccessMeeting, createMeeting, resolveMeetingAccessScope } from '../services/meetings';
 import { listAccessibleTeamIds } from '../services/team-access';
 import {
   addTaskProgressStartedAt,
@@ -2174,13 +2174,14 @@ async function executeQueryMeetingsPlan(
     take: input.limit,
     include: {
       team: { select: { name: true } },
-      project: { select: { name: true } },
+      project: { select: { name: true, teamId: true } },
       owner: { select: { name: true } },
       participants: { select: { userId: true } }
     }
   });
 
-  const visible = meetings.filter((item) => canAccessMeeting(actor, item));
+  const accessScope = await resolveMeetingAccessScope(actor);
+  const visible = meetings.filter((item) => canAccessMeeting(actor, item, accessScope));
   const lines = visible.length
     ? visible.map((item) => [
         `- ${item.title}`,

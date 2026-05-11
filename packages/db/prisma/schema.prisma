@@ -152,6 +152,9 @@ model Workspace {
   views                  View[]
   announcements          Announcement[]
   announcementRecipients AnnouncementRecipient[]
+  announcementPolls      AnnouncementPoll[]
+  announcementPollOptions AnnouncementPollOption[]
+  announcementPollVotes  AnnouncementPollVote[]
   meetings               Meeting[]
   meetingParticipants    MeetingParticipant[]
   knowledgeSpaces        KnowledgeSpace[]
@@ -193,6 +196,7 @@ model User {
   reportedTasks                 Task[]                      @relation("ReportedTasks")
   createdAnnouncements          Announcement[]              @relation("AnnouncementCreator")
   announcementRecipients        AnnouncementRecipient[]
+  announcementPollVotes         AnnouncementPollVote[]
   ownedMeetings                 Meeting[]                   @relation("MeetingOwner")
   createdMeetings               Meeting[]                   @relation("MeetingCreator")
   meetingParticipants           MeetingParticipant[]
@@ -516,6 +520,7 @@ model Announcement {
   workspace     Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   creator       User?                   @relation("AnnouncementCreator", fields: [creatorId], references: [id], onDelete: SetNull)
   recipients    AnnouncementRecipient[]
+  poll          AnnouncementPoll?
   notifications Notification[]
 
   @@index([workspaceId, status, publishedAt])
@@ -538,6 +543,58 @@ model AnnouncementRecipient {
   @@unique([announcementId, userId])
   @@index([workspaceId, userId, readAt])
   @@index([workspaceId, announcementId])
+}
+
+model AnnouncementPoll {
+  id             String   @id @default(uuid()) @db.Uuid
+  workspaceId    String   @db.Uuid
+  announcementId String   @unique @db.Uuid
+  question       String
+  allowMultiple  Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  workspace    Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  announcement Announcement            @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  options      AnnouncementPollOption[]
+  votes        AnnouncementPollVote[]
+
+  @@index([workspaceId, createdAt])
+}
+
+model AnnouncementPollOption {
+  id          String   @id @default(uuid()) @db.Uuid
+  workspaceId String   @db.Uuid
+  pollId      String   @db.Uuid
+  label       String
+  position    Int
+  createdAt   DateTime @default(now())
+
+  workspace Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  poll      AnnouncementPoll      @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  votes     AnnouncementPollVote[]
+
+  @@unique([pollId, position])
+  @@index([workspaceId, pollId])
+}
+
+model AnnouncementPollVote {
+  id          String   @id @default(uuid()) @db.Uuid
+  workspaceId String   @db.Uuid
+  pollId      String   @db.Uuid
+  optionId    String   @db.Uuid
+  userId      String   @db.Uuid
+  createdAt   DateTime @default(now())
+
+  workspace Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  poll      AnnouncementPoll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  option    AnnouncementPollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  user      User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([pollId, userId, optionId])
+  @@index([workspaceId, userId, createdAt])
+  @@index([pollId, userId])
+  @@index([optionId])
 }
 
 model Meeting {

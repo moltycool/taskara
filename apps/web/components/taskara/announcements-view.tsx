@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Bell, Check, Loader2, Megaphone, Plus, Send, X } from 'lucide-react';
+import { Bell, Check, ListChecks, Loader2, Megaphone, Plus, Send, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -15,6 +15,7 @@ import {
    DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { LinearAvatar } from '@/components/taskara/linear-ui';
 import { SmsConfirmDialog } from '@/components/taskara/sms-confirm-dialog';
@@ -27,11 +28,36 @@ import { fa } from '@/lib/fa-copy';
 import { useAuthSession } from '@/store/auth-store';
 import { cn } from '@/lib/utils';
 
-const emptyForm = {
-   title: '',
-   body: '',
-   recipientIds: [] as string[],
+const MIN_POLL_OPTIONS = 2;
+const MAX_POLL_OPTIONS = 12;
+
+type AnnouncementPollDraftForm = {
+   enabled: boolean;
+   question: string;
+   options: string[];
+   allowMultiple: boolean;
 };
+
+type AnnouncementForm = {
+   title: string;
+   body: string;
+   recipientIds: string[];
+   poll: AnnouncementPollDraftForm;
+};
+
+function createEmptyForm(): AnnouncementForm {
+   return {
+      title: '',
+      body: '',
+      recipientIds: [],
+      poll: {
+         enabled: false,
+         question: '',
+         options: ['', ''],
+         allowMultiple: false,
+      },
+   };
+}
 
 export function AnnouncementsView() {
    const navigate = useNavigate();
@@ -46,15 +72,19 @@ export function AnnouncementsView() {
    const [detailsLoading, setDetailsLoading] = useState(false);
    const [error, setError] = useState('');
    const [createOpen, setCreateOpen] = useState(false);
-   const [form, setForm] = useState(emptyForm);
+   const [form, setForm] = useState<AnnouncementForm>(() => createEmptyForm());
    const [submittingAction, setSubmittingAction] = useState<'draft' | 'publish' | null>(null);
    const [draftRecipientIds, setDraftRecipientIds] = useState<string[]>([]);
    const [publishSubmitting, setPublishSubmitting] = useState(false);
    const [smsSending, setSmsSending] = useState(false);
    const [smsConfirmOpen, setSmsConfirmOpen] = useState(false);
+   const [pollSelection, setPollSelection] = useState<string[]>([]);
+   const [pollVoting, setPollVoting] = useState(false);
    const selectedRecipient = announcementRecipientForUser(selected, currentUserId);
    const selectedIsRead = Boolean(selectedRecipient?.readAt);
    const selectedCanMarkRead = Boolean(selectedRecipient && !selectedRecipient.readAt);
+   const selectedCanVotePoll = Boolean(selected?.poll && selected.status === 'PUBLISHED' && selectedRecipient);
+   const selectedPollTotalVotes = (selected?.poll?.options || []).reduce((sum, option) => sum + (option._count?.votes || 0), 0);
 
    const load = useCallback(async () => {
       setError('');
@@ -107,16 +137,31 @@ export function AnnouncementsView() {
       setDraftRecipientIds((selected?.recipients || []).map((recipient) => recipient.userId));
    }, [selected?.id, selected?.recipients]);
 
+   useEffect(() => {
+      setPollSelection(selected?.pollVoteOptionIds || []);
+   }, [selected?.id, selected?.pollVoteOptionIds]);
+
    async function createNewAnnouncement(publish: boolean) {
       if (!form.title.trim() || (publish && !form.recipientIds.length)) return;
+      const pollValidation = validatePollDraft(form.poll);
+      if (!pollValidation.valid) {
+         toast.error(pollValidation.message || fa.announcement.createFailed);
+         return;
+      }
       setSubmittingAction(publish ? 'publish' : 'draft');
       try {
          const created = await taskaraRequest<TaskaraAnnouncement>('/announcements', {
             method: 'POST',
-            body: JSON.stringify({ ...form, publish }),
+            body: JSON.stringify({
+               title: form.title,
+               body: form.body,
+               recipientIds: form.recipientIds,
+               poll: pollValidation.poll,
+               publish,
+            }),
          });
          setCreateOpen(false);
-         setForm(emptyForm);
+         setForm(createEmptyForm());
          await load();
          navigate(`/${orgId || 'taskara'}/announcements/${created.id}`);
          dispatchWorkspaceRefresh({ source: 'announcement:create' });
@@ -186,6 +231,89 @@ export function AnnouncementsView() {
          toast.error(err instanceof Error ? err.message : fa.announcement.updateFailed);
       } finally {
          setPublishSubmitting(false);
+      }
+   }
+
+   function toggleCreatePoll(enabled: boolean) {
+      setForm((current) => {
+         const nextOptions = current.poll.options.length >= MIN_POLL_OPTIONS ? current.poll.options : ['', ''];
+         return {
+            ...current,
+            poll: {
+               ...current.poll,
+               enabled,
+               options: nextOptions,
+            },
+         };
+      });
+   }
+
+   function updatePollOption(index: number, value: string) {
+      setForm((current) => ({
+         ...current,
+         poll: {
+            ...current.poll,
+            options: current.poll.options.map((option, optionIndex) => (optionIndex === index ? value : option)),
+         },
+      }));
+   }
+
+   function addPollOption() {
+      setForm((current) => {
+         if (current.poll.options.length >= MAX_POLL_OPTIONS) return current;
+         return {
+            ...current,
+            poll: {
+               ...current.poll,
+               options: [...current.poll.options, ''],
+            },
+         };
+      });
+   }
+
+   function removePollOption(index: number) {
+      setForm((current) => {
+         if (current.poll.options.length <= MIN_POLL_OPTIONS) return current;
+         return {
+            ...current,
+            poll: {
+               ...current.poll,
+               options: current.poll.options.filter((_, optionIndex) => optionIndex !== index),
+            },
+         };
+      });
+   }
+
+   function togglePollSelection(optionId: string) {
+      if (!selected?.poll) return;
+      if (!selected.poll.allowMultiple) {
+         setPollSelection([optionId]);
+         return;
+      }
+      setPollSelection((current) => (
+         current.includes(optionId)
+            ? current.filter((id) => id !== optionId)
+            : [...current, optionId]
+      ));
+   }
+
+   async function submitPollVote() {
+      if (!selected?.poll || !pollSelection.length || !selectedCanVotePoll) return;
+      setPollVoting(true);
+      try {
+         const updated = await taskaraRequest<TaskaraAnnouncement>(`/announcements/${encodeURIComponent(selected.id)}/poll-vote`, {
+            method: 'PUT',
+            body: JSON.stringify({ optionIds: pollSelection }),
+         });
+         setSelected(updated);
+         setAnnouncements((items) => items.map((item) => (item.id === updated.id ? updated : item)));
+         setPollSelection(updated.pollVoteOptionIds || []);
+         toast.success(fa.announcement.pollVoteSaved);
+         dispatchWorkspaceRefresh({ source: 'announcement:poll-vote' });
+      } catch (err) {
+         toast.error(err instanceof Error ? err.message : fa.announcement.pollVoteFailed);
+      } finally {
+         setPollVoting(false);
       }
    }
 
@@ -281,6 +409,61 @@ export function AnnouncementsView() {
                   <section className="min-h-[140px] border-b border-white/8 pb-8">
                      {selected.body ? <p className="whitespace-pre-wrap text-sm leading-7 text-zinc-300">{selected.body}</p> : <p className="text-sm text-zinc-600">{fa.inbox.noDescription}</p>}
                   </section>
+                  {selected.poll ? (
+                     <section className="mt-6 space-y-4 rounded-xl border border-white/8 bg-[#18181a] p-4">
+                        <div className="flex items-start gap-3">
+                           <span className="mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-zinc-400">
+                              <ListChecks className="size-4" />
+                           </span>
+                           <div className="min-w-0">
+                              <p className="text-sm font-semibold text-zinc-100">{selected.poll.question}</p>
+                              <p className="mt-1 text-xs text-zinc-500">
+                                 {selected.poll.allowMultiple ? fa.announcement.pollAllowMultiple : fa.announcement.pollVote}
+                              </p>
+                           </div>
+                        </div>
+                        <div className="space-y-2">
+                           {selected.poll.options.map((option) => {
+                              const voteCount = option._count?.votes || 0;
+                              const votePercent = selectedPollTotalVotes > 0 ? Math.round((voteCount / selectedPollTotalVotes) * 100) : 0;
+                              const isDraftSelected = pollSelection.includes(option.id);
+                              const isSavedVote = (selected.pollVoteOptionIds || []).includes(option.id);
+                              return (
+                                 <button
+                                    key={option.id}
+                                    className={cn(
+                                       'w-full rounded-lg border px-3 py-2 text-start transition',
+                                       isDraftSelected ? 'border-indigo-400/80 bg-indigo-500/10' : 'border-white/8 bg-[#1f1f22]',
+                                       selectedCanVotePoll ? 'hover:border-indigo-300/70' : 'cursor-default'
+                                    )}
+                                    disabled={!selectedCanVotePoll || pollVoting}
+                                    type="button"
+                                    onClick={() => togglePollSelection(option.id)}
+                                 >
+                                    <div className="flex items-center justify-between gap-3">
+                                       <span className="truncate text-sm text-zinc-200">{option.label}</span>
+                                       <span className="shrink-0 text-[11px] text-zinc-500">{pollVotesCountText(voteCount)}</span>
+                                    </div>
+                                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/8">
+                                       <div className="h-full rounded-full bg-indigo-400/70 transition-all" style={{ width: `${votePercent}%` }} />
+                                    </div>
+                                    {isSavedVote ? <p className="mt-1 text-[11px] text-indigo-200">{fa.announcement.pollYourVote}</p> : null}
+                                 </button>
+                              );
+                           })}
+                        </div>
+                        {selectedCanVotePoll ? (
+                           <Button
+                              className="h-8 rounded-full bg-indigo-500 px-4 text-sm font-normal text-white hover:bg-indigo-400 disabled:bg-indigo-500/40"
+                              disabled={pollVoting || pollSelection.length === 0}
+                              onClick={() => void submitPollVote()}
+                           >
+                              {pollVoting ? <Loader2 className="size-4 animate-spin" /> : null}
+                              {pollVoting ? fa.announcement.pollVoting : fa.announcement.pollVote}
+                           </Button>
+                        ) : null}
+                     </section>
+                  ) : null}
                   {selected.status === 'DRAFT' ? (
                      <DraftPublishControls
                         className="mt-6 xl:hidden"
@@ -327,7 +510,13 @@ export function AnnouncementsView() {
             </section>
          </aside>
 
-         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+         <Dialog
+            open={createOpen}
+            onOpenChange={(open) => {
+               setCreateOpen(open);
+               if (!open) setForm(createEmptyForm());
+            }}
+         >
             <DialogContent
                aria-label={fa.announcement.newAnnouncement}
                showCloseButton={false}
@@ -377,6 +566,87 @@ export function AnnouncementsView() {
                         onChange={(event) => setForm((current) => ({ ...current, body: event.target.value }))}
                      />
                      <div className="mt-auto space-y-3 pb-4">
+                        <section className="space-y-3 rounded-lg border border-white/8 bg-[#18181a] p-3">
+                           <div className="flex items-center justify-between gap-3">
+                              <div className="flex min-w-0 items-center gap-2 text-sm text-zinc-300">
+                                 <ListChecks className="size-4 text-zinc-500" />
+                                 <span>{fa.announcement.addPoll}</span>
+                              </div>
+                              <Switch
+                                 aria-label={fa.announcement.addPoll}
+                                 checked={form.poll.enabled}
+                                 className="data-[state=checked]:bg-indigo-500 data-[state=unchecked]:bg-zinc-700"
+                                 onCheckedChange={toggleCreatePoll}
+                              />
+                           </div>
+                           {form.poll.enabled ? (
+                              <div className="space-y-2">
+                                 <Input
+                                    className="h-9 border-white/10 bg-[#202024] text-sm text-zinc-200 placeholder:text-zinc-500 focus-visible:ring-indigo-400/50"
+                                    placeholder={fa.announcement.pollQuestionPlaceholder}
+                                    value={form.poll.question}
+                                    onChange={(event) =>
+                                       setForm((current) => ({
+                                          ...current,
+                                          poll: {
+                                             ...current.poll,
+                                             question: event.target.value,
+                                          },
+                                       }))
+                                    }
+                                 />
+                                 {form.poll.options.map((option, index) => (
+                                    <div key={`poll-option-${index}`} className="flex items-center gap-2">
+                                       <Input
+                                          className="h-9 border-white/10 bg-[#202024] text-sm text-zinc-200 placeholder:text-zinc-500 focus-visible:ring-indigo-400/50"
+                                          placeholder={pollOptionPlaceholder(index)}
+                                          value={option}
+                                          onChange={(event) => updatePollOption(index, event.target.value)}
+                                       />
+                                       <Button
+                                          size="icon"
+                                          type="button"
+                                          variant="ghost"
+                                          className="size-8 shrink-0 rounded-full text-zinc-400 hover:bg-white/8 hover:text-zinc-200 disabled:text-zinc-700"
+                                          disabled={form.poll.options.length <= MIN_POLL_OPTIONS}
+                                          onClick={() => removePollOption(index)}
+                                       >
+                                          <X className="size-4" />
+                                       </Button>
+                                    </div>
+                                 ))}
+                                 <div className="flex items-center justify-between gap-3">
+                                    <Button
+                                       type="button"
+                                       variant="ghost"
+                                       className="h-8 rounded-full px-3 text-xs text-zinc-300 hover:bg-white/8 hover:text-zinc-100 disabled:text-zinc-600"
+                                       disabled={form.poll.options.length >= MAX_POLL_OPTIONS}
+                                       onClick={addPollOption}
+                                    >
+                                       <Plus className="size-3.5" />
+                                       {fa.announcement.pollAddOption}
+                                    </Button>
+                                    <div className="flex items-center gap-2 text-xs text-zinc-400">
+                                       <span>{fa.announcement.pollAllowMultiple}</span>
+                                       <Switch
+                                          aria-label={fa.announcement.pollAllowMultiple}
+                                          checked={form.poll.allowMultiple}
+                                          className="data-[state=checked]:bg-indigo-500 data-[state=unchecked]:bg-zinc-700"
+                                          onCheckedChange={(checked) =>
+                                             setForm((current) => ({
+                                                ...current,
+                                                poll: {
+                                                   ...current.poll,
+                                                   allowMultiple: checked,
+                                                },
+                                             }))
+                                          }
+                                       />
+                                    </div>
+                                 </div>
+                              </div>
+                           ) : null}
+                        </section>
                         <UserMultiSelectCombobox
                            ariaLabel={fa.announcement.recipients}
                            onChange={(recipientIds) => setForm((current) => ({ ...current, recipientIds }))}
@@ -466,6 +736,40 @@ function DraftPublishControls({
          </Button>
       </section>
    );
+}
+
+function validatePollDraft(poll: AnnouncementPollDraftForm):
+   | { valid: true; poll?: { question: string; options: string[]; allowMultiple: boolean } }
+   | { valid: false; message: string } {
+   if (!poll.enabled) return { valid: true };
+
+   const question = poll.question.trim();
+   if (!question) return { valid: false, message: fa.announcement.pollQuestionRequired };
+
+   const options = poll.options.map((option) => option.trim()).filter(Boolean);
+   if (options.length < MIN_POLL_OPTIONS) return { valid: false, message: fa.announcement.pollRequiresTwoOptions };
+
+   const uniqueOptions = new Set(options.map((option) => option.toLocaleLowerCase()));
+   if (uniqueOptions.size !== options.length) {
+      return { valid: false, message: fa.announcement.pollDuplicateOption };
+   }
+
+   return {
+      valid: true,
+      poll: {
+         question,
+         options: options.slice(0, MAX_POLL_OPTIONS),
+         allowMultiple: poll.allowMultiple,
+      },
+   };
+}
+
+function pollOptionPlaceholder(index: number): string {
+   return fa.announcement.pollOptionPlaceholder.replace('{index}', (index + 1).toLocaleString('fa-IR'));
+}
+
+function pollVotesCountText(count: number): string {
+   return fa.announcement.pollVotesCount.replace('{count}', count.toLocaleString('fa-IR'));
 }
 
 function statusLabel(status: string): string {

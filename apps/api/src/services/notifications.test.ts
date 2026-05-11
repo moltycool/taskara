@@ -3,8 +3,10 @@ import type { Prisma } from '@taskara/db';
 import {
   TASK_COMMENTED_NOTIFICATION_TYPE,
   TASK_MENTIONED_NOTIFICATION_TYPE,
+  collapseInboxNotificationsByThread,
   createTaskMentionNotifications,
   createTaskSubscriberNotifications,
+  inboxNotificationThreadScope,
   subscribeUsersToTask,
   taskInboxNotificationWhere
 } from './notifications';
@@ -242,5 +244,54 @@ describe('task mention notifications', () => {
         body: 'Raha دیدگاهی روی این کار گذاشت.'
       }
     ]);
+  });
+
+  test('collapses inbox notifications to the latest item per thread and keeps unread state', () => {
+    const collapsed = collapseInboxNotificationsByThread([
+      {
+        id: 'n-1',
+        taskId: 'task-1',
+        announcementId: null,
+        meetingId: null,
+        knowledgePageId: null,
+        createdAt: new Date('2026-05-10T10:00:00.000Z'),
+        readAt: null
+      },
+      {
+        id: 'n-2',
+        taskId: 'task-1',
+        announcementId: null,
+        meetingId: null,
+        knowledgePageId: null,
+        createdAt: new Date('2026-05-10T11:00:00.000Z'),
+        readAt: new Date('2026-05-10T12:00:00.000Z')
+      },
+      {
+        id: 'n-3',
+        taskId: 'task-2',
+        announcementId: null,
+        meetingId: null,
+        knowledgePageId: null,
+        createdAt: new Date('2026-05-10T11:30:00.000Z'),
+        readAt: null
+      }
+    ]);
+
+    expect(collapsed).toHaveLength(2);
+    expect(collapsed[0]?.latest.id).toBe('n-3');
+    expect(collapsed[0]?.hasUnread).toBe(true);
+    expect(collapsed[1]?.latest.id).toBe('n-2');
+    expect(collapsed[1]?.hasUnread).toBe(true);
+  });
+
+  test('builds thread scope by task, announcement, meeting, or fallback notification id', () => {
+    expect(inboxNotificationThreadScope({ id: 'n-1', taskId: 'task-1' })).toEqual({ taskId: 'task-1' });
+    expect(inboxNotificationThreadScope({ id: 'n-2', announcementId: 'ann-1' })).toEqual({
+      announcementId: 'ann-1'
+    });
+    expect(inboxNotificationThreadScope({ id: 'n-3', meetingId: 'meeting-1' })).toEqual({
+      meetingId: 'meeting-1'
+    });
+    expect(inboxNotificationThreadScope({ id: 'n-4' })).toEqual({ id: 'n-4' });
   });
 });

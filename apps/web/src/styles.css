@@ -571,12 +571,102 @@ input[type='search'] {
 }
 
 @font-face {
+   font-family: "IRANYekanXFaNum";
+   font-style: normal;
+   font-weight: 500;
+   font-display: swap;
+   src: url("/fonts/iranYekan/woff2/IRANYekanXFaNum-Medium.woff2") format("woff2"),
+      url("/fonts/iranYekan/woff/IRANYekanXFaNum-Medium.woff") format("woff");
+}
+
+@font-face {
+   font-family: "IRANYekanXFaNum";
+   font-style: normal;
+   font-weight: 600;
+   font-display: swap;
+   src: url("/fonts/iranYekan/woff2/IRANYekanXFaNum-DemiBold.woff2") format("woff2"),
+      url("/fonts/iranYekan/woff/IRANYekanXFaNum-DemiBold.woff") format("woff");
+}
+
+@font-face {
+   font-family: "IRANYekanXFaNum";
+   font-style: normal;
+   font-weight: 700;
+   font-display: swap;
+   src: url("/fonts/iranYekan/woff2/IRANYekanXFaNum-Bold.woff2") format("woff2"),
+      url("/fonts/iranYekan/woff/IRANYekanXFaNum-Bold.woff") format("woff");
+}
+
+@font-face {
+   font-family: "IRANYekanXFaNum";
+   font-style: normal;
+   font-weight: 800;
+   font-display: swap;
+   src: url("/fonts/iranYekan/woff2/IRANYekanXFaNum-ExtraBold.woff2") format("woff2"),
+      url("/fonts/iranYekan/woff/IRANYekanXFaNum-ExtraBold.woff") format("woff");
+}
+
+@font-face {
+   font-family: "IRANYekanXFaNum";
+   font-style: normal;
+   font-weight: 900;
+   font-display: swap;
+   src: url("/fonts/iranYekan/woff2/IRANYekanXFaNum-Black.woff2") format("woff2"),
+      url("/fonts/iranYekan/woff/IRANYekanXFaNum-Black.woff") format("woff");
+}
+
+@font-face {
    font-family: "PeydaWebFaNum";
    font-style: normal;
    font-weight: 400;
    font-display: swap;
    src: url("/fonts/Peyda/woff2/PeydaWebFaNum-Regular.woff2") format("woff2"),
       url("/fonts/Peyda/woff/PeydaWebFaNum-Regular.woff") format("woff");
+}
+
+@font-face {
+   font-family: "PeydaWebFaNum";
+   font-style: normal;
+   font-weight: 500;
+   font-display: swap;
+   src: url("/fonts/Peyda/woff2/PeydaWebFaNum-Medium.woff2") format("woff2"),
+      url("/fonts/Peyda/woff/PeydaWebFaNum-Medium.woff") format("woff");
+}
+
+@font-face {
+   font-family: "PeydaWebFaNum";
+   font-style: normal;
+   font-weight: 600;
+   font-display: swap;
+   src: url("/fonts/Peyda/woff2/PeydaWebFaNum-SemiBold.woff2") format("woff2"),
+      url("/fonts/Peyda/woff/PeydaWebFaNum-SemiBold.woff") format("woff");
+}
+
+@font-face {
+   font-family: "PeydaWebFaNum";
+   font-style: normal;
+   font-weight: 700;
+   font-display: swap;
+   src: url("/fonts/Peyda/woff2/PeydaWebFaNum-Bold.woff2") format("woff2"),
+      url("/fonts/Peyda/woff/PeydaWebFaNum-Bold.woff") format("woff");
+}
+
+@font-face {
+   font-family: "PeydaWebFaNum";
+   font-style: normal;
+   font-weight: 800;
+   font-display: swap;
+   src: url("/fonts/Peyda/woff2/PeydaWebFaNum-ExtraBold.woff2") format("woff2"),
+      url("/fonts/Peyda/woff/PeydaWebFaNum-ExtraBold.woff") format("woff");
+}
+
+@font-face {
+   font-family: "PeydaWebFaNum";
+   font-style: normal;
+   font-weight: 900;
+   font-display: swap;
+   src: url("/fonts/Peyda/woff2/PeydaWebFaNum-Black.woff2") format("woff2"),
+      url("/fonts/Peyda/woff/PeydaWebFaNum-Black.woff") format("woff");
 }
 
 ::selection {

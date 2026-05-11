@@ -23,7 +23,7 @@ import { SmsConfirmDialog } from '@/components/taskara/sms-confirm-dialog';
 import { UserMultiSelectCombobox } from '@/components/taskara/user-multi-select-combobox';
 import { formatJalaliDateTime } from '@/lib/jalali';
 import { dispatchWorkspaceRefresh, useLiveRefresh } from '@/lib/live-refresh';
-import { taskaraRequest } from '@/lib/taskara-client';
+import { taskaraRequest, uploadMedia } from '@/lib/taskara-client';
 import type { PaginatedResponse, SmsSendSummary, TaskaraMeeting, TaskaraProject, TaskaraUser } from '@/lib/taskara-types';
 import { fa } from '@/lib/fa-copy';
 import { cn } from '@/lib/utils';
@@ -130,6 +130,40 @@ export function MeetingsView() {
          setSubmitting(false);
       }
    }
+
+   const uploadInlineMeetingAssets = useCallback(async (files: File[]) => {
+      if (!files.length) return [];
+      return await Promise.all(files.map((file) => uploadMedia(file, file.name)));
+   }, []);
+
+   const uploadInlineMeetingImages = useCallback(
+      async (files: File[]) => {
+         const uploaded = await uploadInlineMeetingAssets(files);
+         return uploaded.map((asset) => ({
+            altText: asset.name,
+            src: asset.url,
+         }));
+      },
+      [uploadInlineMeetingAssets]
+   );
+
+   const uploadInlineMeetingFiles = useCallback(
+      async (files: File[]) => {
+         const uploaded = await uploadInlineMeetingAssets(files);
+         return uploaded.map((asset) => ({
+            kind:
+               (asset.mimeType || '').toLowerCase().startsWith('audio/') ||
+               (asset.mimeType || '').toLowerCase().startsWith('video/')
+                  ? ('media' as const)
+                  : ('file' as const),
+            mimeType: asset.mimeType,
+            name: asset.name,
+            sizeBytes: asset.sizeBytes,
+            src: asset.url,
+         }));
+      },
+      [uploadInlineMeetingAssets]
+   );
 
    async function sendSms() {
       if (!selected) return;
@@ -310,10 +344,18 @@ export function MeetingsView() {
                         className="mt-2"
                         contentClassName="min-h-24 text-right text-sm leading-6 text-zinc-300"
                         showToolbar={false}
+                        uploadInlineFiles={uploadInlineMeetingFiles}
+                        uploadInlineImages={uploadInlineMeetingImages}
                         value={form.description}
                         variant="plain"
                         users={users}
                         onChange={(description) => setForm((current) => ({ ...current, description }))}
+                        onInlineFileUploadError={(err) => {
+                           toast.error(err instanceof Error ? err.message : fa.meeting.createFailed);
+                        }}
+                        onInlineImageUploadError={(err) => {
+                           toast.error(err instanceof Error ? err.message : fa.meeting.createFailed);
+                        }}
                         placeholder={fa.meeting.descriptionPlaceholder}
                      />
                      <div className="mt-auto flex flex-wrap items-center gap-1.5 pb-4">

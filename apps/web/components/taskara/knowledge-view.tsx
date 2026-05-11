@@ -1,7 +1,7 @@
 'use client';
 
 import type { FormEvent, ReactNode } from 'react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
    Archive,
@@ -83,6 +83,7 @@ const emptyPageForm: PageForm = {
 };
 
 const createSpaceSelectValue = '__create_space__';
+const knowledgePageAutoSaveDebounceMs = 1200;
 
 export function KnowledgeView() {
    const navigate = useNavigate();
@@ -116,7 +117,9 @@ export function KnowledgeView() {
    const [commentSubmitting, setCommentSubmitting] = useState(false);
    const [verifying, setVerifying] = useState(false);
    const [historyLoading, setHistoryLoading] = useState(false);
-   const [uploadingImages, setUploadingImages] = useState(false);
+   const [uploadingInlineAttachments, setUploadingInlineAttachments] = useState(false);
+   const autoSaveTimerRef = useRef<number | null>(null);
+   const lastAutoSavedDraftKeyRef = useRef<string | null>(null);
 
    const selectedSpace = useMemo(() => {
       if (!spaces.length) return null;
@@ -138,6 +141,18 @@ export function KnowledgeView() {
          labelsDraft !== savedLabels
       );
    }, [contentDraft, labelsDraft, selectedPage, titleDraft]);
+   const currentDraftAutoSaveKey = useMemo(
+      () =>
+         selectedPage
+            ? [
+                 selectedPage.id,
+                 titleDraft.trim(),
+                 contentDirtyValue(contentDraft),
+                 labelsDraft.trim(),
+              ].join('::')
+            : '',
+      [contentDraft, labelsDraft, selectedPage, titleDraft]
+   );
 
    const loadSpaces = useCallback(async () => {
       setError('');
@@ -373,8 +388,15 @@ export function KnowledgeView() {
       setPageDialogOpen(true);
    }
 
-   async function savePage() {
-      if (!selectedPage || !titleDraft.trim()) return;
+   const clearAutoSaveTimer = useCallback(() => {
+      if (autoSaveTimerRef.current === null) return;
+      window.clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+   }, []);
+
+   const savePage = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
+      if (!selectedPage || !titleDraft.trim() || savingPage) return;
+      clearAutoSaveTimer();
       setSavingPage(true);
       try {
          const updated = await taskaraRequest<TaskaraKnowledgePage>(
@@ -392,14 +414,27 @@ export function KnowledgeView() {
          setSelectedPage(updated);
          setPages((items) => items.map((item) => (item.id === updated.id ? updated : item)));
          setLabelsDraft((updated.labels || []).map((item) => item.label.name).join(', '));
-         toast.success(fa.knowledge.saved);
+         if (!silent) toast.success(fa.knowledge.saved);
          dispatchWorkspaceRefresh({ source: 'knowledge:page:update' });
       } catch (err) {
          toast.error(err instanceof Error ? err.message : fa.knowledge.updateFailed);
       } finally {
          setSavingPage(false);
       }
-   }
+   }, [clearAutoSaveTimer, contentDraft, labelsDraft, savingPage, selectedPage, titleDraft]);
+
+   useEffect(() => {
+      clearAutoSaveTimer();
+      if (!selectedPage || !titleDraft.trim() || !hasUnsavedPageChanges || savingPage) return;
+      if (lastAutoSavedDraftKeyRef.current === currentDraftAutoSaveKey) return;
+
+      autoSaveTimerRef.current = window.setTimeout(() => {
+         lastAutoSavedDraftKeyRef.current = currentDraftAutoSaveKey;
+         void savePage({ silent: true });
+      }, knowledgePageAutoSaveDebounceMs);
+
+      return clearAutoSaveTimer;
+   }, [clearAutoSaveTimer, currentDraftAutoSaveKey, hasUnsavedPageChanges, savePage, savingPage, selectedPage, titleDraft]);
 
    async function archivePage() {
       if (!selectedPage || !selectedSpace || !window.confirm(fa.knowledge.archiveConfirm)) return;
@@ -491,21 +526,46 @@ export function KnowledgeView() {
       }
    }
 
-   const uploadInlineImages = useCallback(
+   const uploadInlineAttachments = useCallback(
       async (files: File[]) => {
          if (!selectedPage || files.length === 0) return [];
-         setUploadingImages(true);
+         setUploadingInlineAttachments(true);
          try {
-            const uploaded = await Promise.all(files.map((file) => uploadKnowledgePageAttachment(selectedPage.id, file)));
-            return uploaded.map((attachment) => ({
-               altText: attachment.name,
-               src: attachment.url,
-            }));
+            return await Promise.all(files.map((file) => uploadKnowledgePageAttachment(selectedPage.id, file)));
          } finally {
-            setUploadingImages(false);
+            setUploadingInlineAttachments(false);
          }
       },
       [selectedPage]
+   );
+
+   const uploadInlineImages = useCallback(
+      async (files: File[]) => {
+         const uploaded = await uploadInlineAttachments(files);
+         return uploaded.map((attachment) => ({
+            altText: attachment.name,
+            src: attachment.url,
+         }));
+      },
+      [uploadInlineAttachments]
+   );
+
+   const uploadInlineFiles = useCallback(
+      async (files: File[]) => {
+         const uploaded = await uploadInlineAttachments(files);
+         return uploaded.map((attachment) => ({
+            kind:
+               (attachment.mimeType || '').toLowerCase().startsWith('audio/') ||
+               (attachment.mimeType || '').toLowerCase().startsWith('video/')
+                  ? ('media' as const)
+                  : ('file' as const),
+            mimeType: attachment.mimeType || undefined,
+            name: attachment.name,
+            sizeBytes: attachment.sizeBytes ?? undefined,
+            src: attachment.url,
+         }));
+      },
+      [uploadInlineAttachments]
    );
 
    return (
@@ -610,6 +670,8 @@ export function KnowledgeView() {
                         placeholderClassName="pr-0 text-[15px]"
                         uploadInlineImages={uploadInlineImages}
                         onInlineImageUploadError={(err) => toast.error(err instanceof Error ? err.message : fa.knowledge.attachmentUploadFailed)}
+                        uploadInlineFiles={uploadInlineFiles}
+                        onInlineFileUploadError={(err) => toast.error(err instanceof Error ? err.message : fa.knowledge.attachmentUploadFailed)}
                      />
                   </div>
                </div>
@@ -639,7 +701,7 @@ export function KnowledgeView() {
                         <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
                            <BookOpen className="size-3.5 shrink-0" />
                            <span className="truncate">{selectedSpace?.name}</span>
-                           {detailsLoading || uploadingImages ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                           {detailsLoading || uploadingInlineAttachments ? <Loader2 className="size-3.5 animate-spin" /> : null}
                         </div>
                         <Button
                            size="sm"

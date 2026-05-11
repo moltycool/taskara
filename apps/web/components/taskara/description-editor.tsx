@@ -22,6 +22,8 @@ import {
    MenuOption,
    useBasicTypeaheadTriggerMatch,
 } from '@lexical/react/LexicalTypeaheadMenuPlugin';
+import { useLexicalEditable } from '@lexical/react/useLexicalEditable';
+import { useLexicalNodeSelection } from '@lexical/react/useLexicalNodeSelection';
 import { $isLinkNode, AutoLinkNode, LinkNode, TOGGLE_LINK_COMMAND } from '@lexical/link';
 import {
    $insertList,
@@ -79,17 +81,20 @@ import {
    $createRangeSelection,
    $createTextNode,
    $findMatchingParent,
+   $getNodeByKey,
    $getRoot,
    $getSelection,
    $insertNodes,
    $isBlockElementNode,
    $isElementNode,
+   $isNodeSelection,
    $isParagraphNode,
    $isRangeSelection,
    $isTextNode,
    $normalizeSelection__EXPERIMENTAL,
    $setSelection,
    BLUR_COMMAND,
+   CLICK_COMMAND,
    COMMAND_PRIORITY_CRITICAL,
    COMMAND_PRIORITY_EDITOR,
    COMMAND_PRIORITY_HIGH,
@@ -105,6 +110,8 @@ import {
    KEY_DOWN_COMMAND,
    KEY_ENTER_COMMAND,
    KEY_ESCAPE_COMMAND,
+   KEY_BACKSPACE_COMMAND,
+   KEY_DELETE_COMMAND,
    KEY_TAB_COMMAND,
    mergeRegister,
    OUTDENT_CONTENT_COMMAND,
@@ -150,9 +157,11 @@ import {
    Italic,
    Link2,
    Link2Off,
+   Loader2,
    List,
    ListChecks,
    ListOrdered,
+   Paperclip,
    Pilcrow,
    Quote,
    Rows3,
@@ -195,6 +204,8 @@ type DescriptionEditorProps = {
    toolbarClassName?: string;
    uploadInlineImages?: (files: File[]) => Promise<DescriptionInlineImage[]>;
    onInlineImageUploadError?: (error: unknown) => void;
+   uploadInlineFiles?: (files: File[]) => Promise<DescriptionInlineFile[]>;
+   onInlineFileUploadError?: (error: unknown) => void;
    users?: MentionUser[];
    variant?: 'framed' | 'plain';
 };
@@ -204,6 +215,16 @@ type DescriptionInlineImage = {
    height?: number;
    src: string;
    width?: number;
+};
+
+type InlineFileKind = 'file' | 'media';
+
+type DescriptionInlineFile = {
+   kind?: InlineFileKind;
+   mimeType?: string | null;
+   name?: string;
+   sizeBytes?: number | null;
+   src: string;
 };
 
 type SerializedMentionNode = Spread<
@@ -224,6 +245,29 @@ type SerializedInlineImageNode = Spread<
       type: 'inline-image';
       version: 1;
       width?: number;
+   },
+   SerializedLexicalNode
+>;
+
+type SerializedInlineFileNode = Spread<
+   {
+      kind: InlineFileKind;
+      mimeType?: string;
+      name: string;
+      sizeBytes?: number;
+      src: string;
+      type: 'inline-file';
+      version: 1;
+   },
+   SerializedLexicalNode
+>;
+
+type SerializedInlineUploadPlaceholderNode = Spread<
+   {
+      fileName: string;
+      type: 'inline-upload-placeholder';
+      uploadKind: 'file' | 'image';
+      version: 1;
    },
    SerializedLexicalNode
 >;
@@ -267,9 +311,9 @@ const editorTheme: EditorThemeClasses = {
       checklist: 'm-0 p-0',
       listitem: 'mx-4 my-0 marker:text-zinc-500',
       listitemChecked:
-         "relative mx-1 my-0 block min-h-6 list-none py-0 pl-1 pr-6 text-zinc-500 line-through before:absolute before:right-0 before:top-1/2 before:size-4 before:-translate-y-1/2 before:rounded before:border before:border-indigo-500/70 before:bg-indigo-600 before:content-[''] after:absolute after:right-[0.28rem] after:top-1/2 after:h-1.5 after:w-2 after:-translate-y-1/2 after:-rotate-45 after:border-b-2 after:border-l-2 after:border-white after:content-[''] dark:before:border-indigo-400/60 dark:before:bg-indigo-500/45",
+         "relative mx-1 my-0 block min-h-6 list-none py-0 pl-1 pr-6 text-zinc-500 line-through before:absolute before:right-0 before:top-1/2 before:block before:size-4 before:-translate-y-1/2 before:rounded before:border before:border-indigo-500/70 before:bg-indigo-600 before:content-[''] after:absolute after:right-[0.28rem] after:top-1/2 after:block after:h-1.5 after:w-2 after:-translate-y-1/2 after:-rotate-45 after:border-b-2 after:border-l-2 after:border-white after:content-[''] dark:before:border-indigo-400/60 dark:before:bg-indigo-500/45",
       listitemUnchecked:
-         "relative mx-1 my-0 block min-h-6 list-none py-0 pl-1 pr-6 before:absolute before:right-0 before:top-1/2 before:size-4 before:-translate-y-1/2 before:rounded before:border before:border-zinc-300 before:bg-white before:content-[''] dark:before:border-white/20 dark:before:bg-white/5",
+         "relative mx-1 my-0 block min-h-6 list-none py-0 pl-1 pr-6 before:absolute before:right-0 before:top-1/2 before:block before:size-4 before:-translate-y-1/2 before:rounded before:border before:border-zinc-300 before:bg-white before:content-[''] dark:before:border-white/20 dark:before:bg-white/5",
       nested: {
          listitem: 'list-none before:hidden after:hidden',
       },
@@ -328,6 +372,222 @@ function $convertInlineImageElement(domNode: Node): DOMConversionOutput | null {
    };
 }
 
+function $convertInlineFileElement(domNode: Node): DOMConversionOutput | null {
+   const anchor = domNode as HTMLAnchorElement;
+   if (anchor.tagName !== 'A') return null;
+   if (anchor.getAttribute('data-taskara-inline-file') !== 'true') return null;
+
+   const src = anchor.getAttribute('href');
+   if (!src || src.startsWith('file:///')) return null;
+
+   const fileName = anchor.getAttribute('data-taskara-inline-name') || anchor.textContent?.trim() || '';
+   const mimeType = anchor.getAttribute('data-taskara-inline-mime') || undefined;
+   const sizeBytes = positiveNumber(anchor.getAttribute('data-taskara-inline-size'));
+   const kind = inferInlineFileKind(mimeType, fileName, anchor.getAttribute('data-taskara-inline-kind'));
+
+   return {
+      node: $createInlineFileNode({
+         kind,
+         mimeType,
+         name: fileName || inlineFileDisplayName(undefined, src),
+         sizeBytes,
+         src,
+      }),
+   };
+}
+
+function SelectableInlineAsset({
+   children,
+   className,
+   nodeKey,
+   title,
+}: {
+   children: ReactNode;
+   className?: string;
+   nodeKey: NodeKey;
+   title?: string;
+}) {
+   const [editor] = useLexicalComposerContext();
+   const [isSelected, setSelected, clearSelection] = useLexicalNodeSelection(nodeKey);
+   const isEditable = useLexicalEditable();
+   const rootRef = useRef<HTMLSpanElement | null>(null);
+
+   useEffect(() => {
+      return mergeRegister(
+         editor.registerCommand<MouseEvent>(
+            CLICK_COMMAND,
+            (event) => {
+               const target = event.target;
+               if (!isEditable || !(target instanceof Node) || !rootRef.current?.contains(target)) return false;
+               event.preventDefault();
+               if (event.shiftKey) {
+                  setSelected(!isSelected);
+               } else {
+                  clearSelection();
+                  setSelected(true);
+               }
+               return true;
+            },
+            COMMAND_PRIORITY_LOW
+         ),
+         editor.registerCommand(
+            KEY_DELETE_COMMAND,
+            (event) => {
+               if (!isSelected) return false;
+               const selection = $getSelection();
+               if (!$isNodeSelection(selection)) return false;
+
+               event.preventDefault();
+               let deleted = false;
+               editor.update(() => {
+                  const node = $getNodeByKey(nodeKey);
+                  if (
+                     $isInlineImageNode(node) ||
+                     $isInlineFileNode(node) ||
+                     $isInlineUploadPlaceholderNode(node)
+                  ) {
+                     node.remove();
+                     deleted = true;
+                  }
+               });
+               return deleted;
+            },
+            COMMAND_PRIORITY_LOW
+         ),
+         editor.registerCommand(
+            KEY_BACKSPACE_COMMAND,
+            (event) => {
+               if (!isSelected) return false;
+               const selection = $getSelection();
+               if (!$isNodeSelection(selection)) return false;
+
+               event.preventDefault();
+               let deleted = false;
+               editor.update(() => {
+                  const node = $getNodeByKey(nodeKey);
+                  if (
+                     $isInlineImageNode(node) ||
+                     $isInlineFileNode(node) ||
+                     $isInlineUploadPlaceholderNode(node)
+                  ) {
+                     node.remove();
+                     deleted = true;
+                  }
+               });
+               return deleted;
+            },
+            COMMAND_PRIORITY_LOW
+         )
+      );
+   }, [clearSelection, editor, isEditable, isSelected, nodeKey, setSelected]);
+
+   return (
+      <span
+         ref={rootRef}
+         className={cn(
+            'mx-0.5 inline-flex max-w-full align-middle transition',
+            isSelected ? 'ring-2 ring-indigo-400/70 ring-offset-1 ring-offset-[#111113]' : '',
+            className
+         )}
+         contentEditable={false}
+         dir="ltr"
+         draggable={false}
+         title={title}
+         onMouseDown={(event) => event.preventDefault()}
+      >
+         {children}
+      </span>
+   );
+}
+
+function InlineImageComponent({
+   altText,
+   height,
+   nodeKey,
+   src,
+   width,
+}: {
+   altText: string;
+   height?: number;
+   nodeKey: NodeKey;
+   src: string;
+   width?: number;
+}) {
+   return (
+      <SelectableInlineAsset nodeKey={nodeKey} title={altText || 'تصویر'}>
+         <img
+            alt={altText}
+            className="inline max-h-80 max-w-full rounded-md border border-white/10 bg-black/20 object-contain align-middle"
+            draggable={false}
+            loading="lazy"
+            src={src}
+            style={{
+               height: height ? `${height}px` : undefined,
+               width: width ? `${width}px` : undefined,
+            }}
+         />
+      </SelectableInlineAsset>
+   );
+}
+
+function InlineFileComponent({
+   kind,
+   mimeType,
+   name,
+   nodeKey,
+   sizeBytes,
+   src,
+}: {
+   kind: InlineFileKind;
+   mimeType?: string;
+   name: string;
+   nodeKey: NodeKey;
+   sizeBytes?: number;
+   src: string;
+}) {
+   const fileKind = inferInlineFileKind(mimeType, name, kind);
+   const fileSize = formatFileSize(sizeBytes);
+   const displayName = inlineFileDisplayName(name, src);
+
+   return (
+      <SelectableInlineAsset nodeKey={nodeKey} title={displayName}>
+         <span className="inline-flex max-w-[320px] items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.045] px-2 py-1 text-xs leading-5 text-zinc-300">
+            <Paperclip className="size-3.5 shrink-0 text-zinc-500" />
+            <span className="min-w-0 truncate">{displayName}</span>
+            <span className="shrink-0 text-[11px] text-zinc-500">
+               {fileKind === 'media' ? 'رسانه' : 'فایل'}
+               {fileSize ? ` • ${fileSize}` : ''}
+            </span>
+         </span>
+      </SelectableInlineAsset>
+   );
+}
+
+function InlineUploadPlaceholderComponent({
+   fileName,
+   nodeKey,
+   uploadKind,
+}: {
+   fileName: string;
+   nodeKey: NodeKey;
+   uploadKind: 'file' | 'image';
+}) {
+   const fallbackName = uploadKind === 'image' ? 'تصویر' : 'فایل';
+
+   return (
+      <SelectableInlineAsset nodeKey={nodeKey} title="در حال بارگذاری">
+         <span className="inline-flex max-w-[320px] items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 text-xs leading-5 text-zinc-500">
+            {uploadKind === 'image' ? <ImagePlus className="size-3.5 shrink-0" /> : <Paperclip className="size-3.5 shrink-0" />}
+            <span className="min-w-0 truncate">{fileName.trim() || fallbackName}</span>
+            <span className="inline-flex items-center gap-1 text-[11px] text-zinc-500">
+               <Loader2 className="size-3 animate-spin" />
+               <span className="animate-pulse">در حال بارگذاری</span>
+            </span>
+         </span>
+      </SelectableInlineAsset>
+   );
+}
+
 class InlineImageNode extends DecoratorNode<JSX.Element> {
    __altText: string;
    __height?: number;
@@ -361,6 +621,10 @@ class InlineImageNode extends DecoratorNode<JSX.Element> {
       this.__altText = altText;
       this.__width = width;
       this.__height = height;
+   }
+
+   isInline(): true {
+      return true;
    }
 
    createDOM(config: EditorConfig): HTMLElement {
@@ -403,16 +667,12 @@ class InlineImageNode extends DecoratorNode<JSX.Element> {
 
    decorate(): JSX.Element {
       return (
-         <img
-            alt={this.__altText}
-            className="mx-0.5 inline max-h-80 max-w-full rounded-md border border-white/10 bg-black/20 object-contain align-middle"
-            draggable={false}
-            loading="lazy"
+         <InlineImageComponent
+            altText={this.__altText}
+            height={this.__height}
+            nodeKey={this.getKey()}
             src={this.__src}
-            style={{
-               height: this.__height ? `${this.__height}px` : undefined,
-               width: this.__width ? `${this.__width}px` : undefined,
-            }}
+            width={this.__width}
          />
       );
    }
@@ -433,6 +693,208 @@ function $createInlineImageNode({ altText = '', height, src, width }: Descriptio
 
 function $isInlineImageNode(node: LexicalNode | null | undefined): node is InlineImageNode {
    return node instanceof InlineImageNode;
+}
+
+class InlineFileNode extends DecoratorNode<JSX.Element> {
+   __kind: InlineFileKind;
+   __mimeType?: string;
+   __name: string;
+   __sizeBytes?: number;
+   __src: string;
+
+   static getType(): string {
+      return 'inline-file';
+   }
+
+   static clone(node: InlineFileNode): InlineFileNode {
+      return new InlineFileNode(node.__src, node.__name, node.__kind, node.__mimeType, node.__sizeBytes, node.__key);
+   }
+
+   static importDOM(): DOMConversionMap | null {
+      return {
+         a: () => ({
+            conversion: $convertInlineFileElement,
+            priority: 1,
+         }),
+      };
+   }
+
+   static importJSON(serializedNode: SerializedInlineFileNode): InlineFileNode {
+      return $createInlineFileNode(serializedNode).updateFromJSON(serializedNode);
+   }
+
+   constructor(src: string, name: string, kind: InlineFileKind, mimeType?: string, sizeBytes?: number, key?: NodeKey) {
+      super(key);
+      this.__src = src;
+      this.__name = name;
+      this.__kind = kind;
+      this.__mimeType = mimeType;
+      this.__sizeBytes = sizeBytes;
+   }
+
+   isInline(): true {
+      return true;
+   }
+
+   createDOM(config: EditorConfig): HTMLElement {
+      const dom = document.createElement('span');
+      const className = config.theme.image;
+      if (className) dom.className = className;
+      return dom;
+   }
+
+   updateDOM(): false {
+      return false;
+   }
+
+   exportDOM(): DOMExportOutput {
+      const anchor = document.createElement('a');
+      anchor.setAttribute('href', this.__src);
+      anchor.setAttribute('data-taskara-inline-file', 'true');
+      anchor.setAttribute('data-taskara-inline-kind', this.__kind);
+      anchor.setAttribute('data-taskara-inline-name', this.__name);
+      if (this.__mimeType) anchor.setAttribute('data-taskara-inline-mime', this.__mimeType);
+      if (typeof this.__sizeBytes === 'number' && Number.isFinite(this.__sizeBytes) && this.__sizeBytes > 0) {
+         anchor.setAttribute('data-taskara-inline-size', String(this.__sizeBytes));
+      }
+      anchor.textContent = this.__name;
+      return { element: anchor };
+   }
+
+   updateFromJSON(serializedNode: LexicalUpdateJSON<SerializedInlineFileNode>): this {
+      return super.updateFromJSON(serializedNode).setFile(serializedNode);
+   }
+
+   exportJSON(): SerializedInlineFileNode {
+      return {
+         ...super.exportJSON(),
+         kind: this.__kind,
+         mimeType: this.__mimeType,
+         name: this.__name,
+         sizeBytes: this.__sizeBytes,
+         src: this.__src,
+         type: 'inline-file',
+         version: 1,
+      };
+   }
+
+   decorate(): JSX.Element {
+      return (
+         <InlineFileComponent
+            kind={this.__kind}
+            mimeType={this.__mimeType}
+            name={this.__name}
+            nodeKey={this.getKey()}
+            sizeBytes={this.__sizeBytes}
+            src={this.__src}
+         />
+      );
+   }
+
+   setFile({ kind, mimeType, name, sizeBytes, src }: DescriptionInlineFile & { kind: InlineFileKind; name: string }): this {
+      const writable = this.getWritable();
+      writable.__kind = kind;
+      writable.__mimeType = normalizeNullableText(mimeType) || undefined;
+      writable.__name = name.trim() || 'فایل';
+      writable.__sizeBytes = sanitizeSizeBytes(sizeBytes);
+      writable.__src = src;
+      return writable;
+   }
+}
+
+class InlineUploadPlaceholderNode extends DecoratorNode<JSX.Element> {
+   __fileName: string;
+   __uploadKind: 'file' | 'image';
+
+   static getType(): string {
+      return 'inline-upload-placeholder';
+   }
+
+   static clone(node: InlineUploadPlaceholderNode): InlineUploadPlaceholderNode {
+      return new InlineUploadPlaceholderNode(node.__fileName, node.__uploadKind, node.__key);
+   }
+
+   static importJSON(serializedNode: SerializedInlineUploadPlaceholderNode): InlineUploadPlaceholderNode {
+      return $createInlineUploadPlaceholderNode(serializedNode).updateFromJSON(serializedNode);
+   }
+
+   constructor(fileName: string, uploadKind: 'file' | 'image', key?: NodeKey) {
+      super(key);
+      this.__fileName = fileName;
+      this.__uploadKind = uploadKind;
+   }
+
+   isInline(): true {
+      return true;
+   }
+
+   createDOM(config: EditorConfig): HTMLElement {
+      const dom = document.createElement('span');
+      const className = config.theme.image;
+      if (className) dom.className = className;
+      return dom;
+   }
+
+   updateDOM(): false {
+      return false;
+   }
+
+   updateFromJSON(serializedNode: LexicalUpdateJSON<SerializedInlineUploadPlaceholderNode>): this {
+      return super.updateFromJSON(serializedNode).setState(serializedNode.fileName, serializedNode.uploadKind);
+   }
+
+   exportJSON(): SerializedInlineUploadPlaceholderNode {
+      return {
+         ...super.exportJSON(),
+         fileName: this.__fileName,
+         type: 'inline-upload-placeholder',
+         uploadKind: this.__uploadKind,
+         version: 1,
+      };
+   }
+
+   decorate(): JSX.Element {
+      return (
+         <InlineUploadPlaceholderComponent
+            fileName={this.__fileName}
+            nodeKey={this.getKey()}
+            uploadKind={this.__uploadKind}
+         />
+      );
+   }
+
+   setState(fileName: string, uploadKind: 'file' | 'image'): this {
+      const writable = this.getWritable();
+      writable.__fileName = fileName;
+      writable.__uploadKind = uploadKind;
+      return writable;
+   }
+}
+
+function $createInlineFileNode(file: DescriptionInlineFile & { kind?: InlineFileKind; name?: string }): InlineFileNode {
+   const fileName = file.name?.trim() || inlineFileDisplayName(undefined, file.src);
+   const kind = inferInlineFileKind(file.mimeType, fileName, file.kind);
+   return $applyNodeReplacement(
+      new InlineFileNode(file.src, fileName, kind, normalizeNullableText(file.mimeType), sanitizeSizeBytes(file.sizeBytes))
+   );
+}
+
+function $isInlineFileNode(node: LexicalNode | null | undefined): node is InlineFileNode {
+   return node instanceof InlineFileNode;
+}
+
+function $createInlineUploadPlaceholderNode({
+   fileName,
+   uploadKind,
+}: {
+   fileName: string;
+   uploadKind: 'file' | 'image';
+}): InlineUploadPlaceholderNode {
+   return $applyNodeReplacement(new InlineUploadPlaceholderNode(fileName, uploadKind));
+}
+
+function $isInlineUploadPlaceholderNode(node: LexicalNode | null | undefined): node is InlineUploadPlaceholderNode {
+   return node instanceof InlineUploadPlaceholderNode;
 }
 
 class MentionNode extends TextNode {
@@ -539,7 +1001,7 @@ function serializeEditorState(editorState: EditorState) {
 }
 
 function $isNodeEmpty(node: LexicalNode): boolean {
-   if ($isInlineImageNode(node)) return false;
+   if ($isInlineImageNode(node) || $isInlineFileNode(node) || $isInlineUploadPlaceholderNode(node)) return false;
    if ($isElementNode(node)) return node.getChildren().every((child) => $isNodeEmpty(child));
    return node.getTextContent().trim().length === 0;
 }
@@ -899,13 +1361,17 @@ function $formatCurrentSelection(format: TextFormatType) {
 
 function createSlashCommandOptions({
    editor,
-   onUploadError,
+   onFileUploadError,
+   onImageUploadError,
    query,
+   uploadFiles,
    uploadImages,
 }: {
    editor: LexicalEditor;
-   onUploadError?: (error: unknown) => void;
+   onFileUploadError?: (error: unknown) => void;
+   onImageUploadError?: (error: unknown) => void;
    query: string;
+   uploadFiles?: (files: File[]) => Promise<DescriptionInlineFile[]>;
    uploadImages?: (files: File[]) => Promise<DescriptionInlineImage[]>;
 }) {
    const dynamicOptions = createDynamicSlashCommandOptions(query);
@@ -1054,12 +1520,25 @@ function createSlashCommandOptions({
       ...(uploadImages
          ? [
               new SlashCommandOption({
-                 command: (activeEditor) => selectAndUploadInlineImages(activeEditor, uploadImages, onUploadError),
+                 command: (activeEditor) =>
+                    selectAndUploadInlineImages(activeEditor, uploadImages, onImageUploadError),
                  description: 'بارگذاری تصویر در صفحه',
                  icon: <ImagePlus className="size-4" />,
                  key: 'image-upload',
                  keywords: ['image', 'photo', 'upload', 'file', 'تصویر'],
                  title: 'بارگذاری تصویر',
+              }),
+           ]
+         : []),
+      ...(uploadFiles
+         ? [
+              new SlashCommandOption({
+                 command: (activeEditor) => selectAndUploadInlineFiles(activeEditor, uploadFiles, onFileUploadError),
+                 description: 'بارگذاری فایل یا رسانه',
+                 icon: <Paperclip className="size-4" />,
+                 key: 'file-upload',
+                 keywords: ['file', 'media', 'upload', 'attachment', 'پیوست'],
+                 title: 'بارگذاری فایل',
               }),
            ]
          : []),
@@ -1165,6 +1644,15 @@ function insertImageUrlWithPrompt(editor: LexicalEditor) {
    });
 }
 
+function cloneCurrentRangeSelectionSnapshot(editor: LexicalEditor): RangeSelection | null {
+   let snapshot: RangeSelection | null = null;
+   editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      snapshot = $isRangeSelection(selection) ? selection.clone() : null;
+   });
+   return snapshot;
+}
+
 function selectAndUploadInlineImages(
    editor: LexicalEditor,
    uploadImages: (files: File[]) => Promise<DescriptionInlineImage[]>,
@@ -1177,22 +1665,38 @@ function selectAndUploadInlineImages(
    input.onchange = () => {
       const files = Array.from(input.files || []);
       if (!files.length) return;
-
-      let selectionSnapshot: RangeSelection | null = null;
-      editor.getEditorState().read(() => {
-         const selection = $getSelection();
-         selectionSnapshot = $isRangeSelection(selection) ? selection.clone() : null;
-      });
+      const selectionSnapshot = cloneCurrentRangeSelectionSnapshot(editor);
       void uploadAndInsertInlineImages(editor, files, uploadImages, onUploadError, selectionSnapshot);
    };
    input.click();
 }
 
+function selectAndUploadInlineFiles(
+   editor: LexicalEditor,
+   uploadFiles: (files: File[]) => Promise<DescriptionInlineFile[]>,
+   onUploadError?: (error: unknown) => void
+) {
+   const input = document.createElement('input');
+   input.type = 'file';
+   input.multiple = true;
+   input.onchange = () => {
+      const files = Array.from(input.files || []);
+      if (!files.length) return;
+      const selectionSnapshot = cloneCurrentRangeSelectionSnapshot(editor);
+      void uploadAndInsertInlineFiles(editor, files, uploadFiles, onUploadError, selectionSnapshot);
+   };
+   input.click();
+}
+
 function SlashCommandsPlugin({
-   onUploadError,
+   onFileUploadError,
+   onImageUploadError,
+   uploadFiles,
    uploadImages,
 }: {
-   onUploadError?: (error: unknown) => void;
+   onFileUploadError?: (error: unknown) => void;
+   onImageUploadError?: (error: unknown) => void;
+   uploadFiles?: (files: File[]) => Promise<DescriptionInlineFile[]>;
    uploadImages?: (files: File[]) => Promise<DescriptionInlineImage[]>;
 }): JSX.Element | null {
    const [editor] = useLexicalComposerContext();
@@ -1205,8 +1709,15 @@ function SlashCommandsPlugin({
 
    const options = useMemo(() => {
       const query = (queryString || '').trim().toLocaleLowerCase('en-US');
-      return createSlashCommandOptions({ editor, onUploadError, query, uploadImages });
-   }, [editor, onUploadError, queryString, uploadImages]);
+      return createSlashCommandOptions({
+         editor,
+         onFileUploadError,
+         onImageUploadError,
+         query,
+         uploadFiles,
+         uploadImages,
+      });
+   }, [editor, onFileUploadError, onImageUploadError, queryString, uploadFiles, uploadImages]);
 
    const onSelectOption = useCallback(
       (selectedOption: SlashCommandOption, textNodeContainingQuery: TextNode | null, closeMenu: () => void) => {
@@ -1516,10 +2027,14 @@ function $deleteCurrentTable() {
 }
 
 function DescriptionContextMenu({
-   onUploadError,
+   onFileUploadError,
+   onImageUploadError,
+   uploadFiles,
    uploadImages,
 }: {
-   onUploadError?: (error: unknown) => void;
+   onFileUploadError?: (error: unknown) => void;
+   onImageUploadError?: (error: unknown) => void;
+   uploadFiles?: (files: File[]) => Promise<DescriptionInlineFile[]>;
    uploadImages?: (files: File[]) => Promise<DescriptionInlineImage[]>;
 }): JSX.Element {
    const [editor] = useLexicalComposerContext();
@@ -1589,7 +2104,7 @@ function DescriptionContextMenu({
 
    return (
       <ContextMenuContent
-         className="w-64 border-white/10 bg-[#202023] p-1.5 text-zinc-300 shadow-2xl"
+         className="w-fit max-w-[calc(100vw-1.5rem)] border-white/10 bg-[#202023] p-1.5 text-zinc-300 shadow-2xl sm:max-w-[22rem]"
          dir="rtl"
       >
          <ContextMenuLabel className="px-2 py-1 text-xs font-normal text-zinc-500">متن</ContextMenuLabel>
@@ -1688,8 +2203,16 @@ function DescriptionContextMenu({
             تصویر از لینک
          </EditorContextMenuItem>
          {uploadImages ? (
-            <EditorContextMenuItem icon={<ImagePlus className="size-4" />} onSelect={() => selectAndUploadInlineImages(editor, uploadImages, onUploadError)}>
+            <EditorContextMenuItem
+               icon={<ImagePlus className="size-4" />}
+               onSelect={() => selectAndUploadInlineImages(editor, uploadImages, onImageUploadError)}
+            >
                بارگذاری تصویر
+            </EditorContextMenuItem>
+         ) : null}
+         {uploadFiles ? (
+            <EditorContextMenuItem icon={<Paperclip className="size-4" />} onSelect={() => selectAndUploadInlineFiles(editor, uploadFiles, onFileUploadError)}>
+               بارگذاری فایل
             </EditorContextMenuItem>
          ) : null}
 
@@ -1997,6 +2520,43 @@ function CompactChecklistShortcutPlugin() {
    return null;
 }
 
+function ChecklistRtlDirectionPlugin() {
+   const [editor] = useLexicalComposerContext();
+
+   const syncListItemDirection = useCallback(
+      (nodeKey: NodeKey) => {
+         const listItemElement = editor.getElementByKey(nodeKey);
+         if (!(listItemElement instanceof HTMLLIElement)) return;
+
+         const listItemNode = $getNodeByKey(nodeKey);
+         if (!(listItemNode instanceof ListItemNode)) return;
+
+         const parentNode = listItemNode.getParent();
+         const isChecklistItem = parentNode instanceof ListNode && parentNode.getListType() === 'check';
+
+         if (isChecklistItem) {
+            listItemElement.setAttribute('dir', 'rtl');
+         } else if (listItemElement.dir === 'rtl') {
+            listItemElement.removeAttribute('dir');
+         }
+      },
+      [editor]
+   );
+
+   useEffect(() => {
+      return editor.registerMutationListener(ListItemNode, (mutatedNodes) => {
+         editor.getEditorState().read(() => {
+            for (const [nodeKey, mutation] of mutatedNodes) {
+               if (mutation === 'destroyed') continue;
+               syncListItemDirection(nodeKey);
+            }
+         });
+      });
+   }, [editor, syncListItemDirection]);
+
+   return null;
+}
+
 type CanIndentPredicate = (node: ElementNode) => boolean;
 
 function $defaultCanIndent(node: ElementNode) {
@@ -2182,42 +2742,115 @@ function HeadingEnterPlugin() {
    return null;
 }
 
-function InlineImagesPlugin({
-   onUploadError,
+function InlineAssetsPlugin({
+   onFileUploadError,
+   onImageUploadError,
+   uploadFiles,
    uploadImages,
 }: {
-   onUploadError?: (error: unknown) => void;
+   onFileUploadError?: (error: unknown) => void;
+   onImageUploadError?: (error: unknown) => void;
+   uploadFiles?: (files: File[]) => Promise<DescriptionInlineFile[]>;
    uploadImages?: (files: File[]) => Promise<DescriptionInlineImage[]>;
 }) {
    const [editor] = useLexicalComposerContext();
-   const onUploadErrorRef = useRef(onUploadError);
+   const onFileUploadErrorRef = useRef(onFileUploadError);
+   const onImageUploadErrorRef = useRef(onImageUploadError);
+   const uploadFilesRef = useRef(uploadFiles);
    const uploadImagesRef = useRef(uploadImages);
 
    useEffect(() => {
-      onUploadErrorRef.current = onUploadError;
+      onFileUploadErrorRef.current = onFileUploadError;
+      onImageUploadErrorRef.current = onImageUploadError;
+      uploadFilesRef.current = uploadFiles;
       uploadImagesRef.current = uploadImages;
-   }, [onUploadError, uploadImages]);
+   }, [onFileUploadError, onImageUploadError, uploadFiles, uploadImages]);
 
    useEffect(() => {
       return editor.registerCommand(
          DRAG_DROP_PASTE,
          (files) => {
-            const upload = uploadImagesRef.current;
-            if (!upload) return false;
-
             const imageFiles = files.filter(isInlineImageFile);
-            if (!imageFiles.length) return false;
+            const nonImageFiles = files.filter((file) => !isInlineImageFile(file));
+            const uploadImages = uploadImagesRef.current;
+            const uploadFiles = uploadFilesRef.current;
 
-            const selection = $getSelection();
-            const selectionSnapshot = $isRangeSelection(selection) ? selection.clone() : null;
-            void uploadAndInsertInlineImages(editor, imageFiles, upload, onUploadErrorRef.current, selectionSnapshot);
-            return true;
+            let handled = false;
+            const selectionSnapshot = cloneCurrentRangeSelectionSnapshot(editor);
+
+            if (imageFiles.length && uploadImages) {
+               handled = true;
+               void uploadAndInsertInlineImages(
+                  editor,
+                  imageFiles,
+                  uploadImages,
+                  onImageUploadErrorRef.current,
+                  selectionSnapshot
+               );
+            }
+
+            if (nonImageFiles.length && uploadFiles) {
+               handled = true;
+               void uploadAndInsertInlineFiles(
+                  editor,
+                  nonImageFiles,
+                  uploadFiles,
+                  onFileUploadErrorRef.current,
+                  imageFiles.length ? null : selectionSnapshot
+               );
+            }
+
+            if (!handled && files.length && uploadFiles) {
+               handled = true;
+               void uploadAndInsertInlineFiles(
+                  editor,
+                  files,
+                  uploadFiles,
+                  onFileUploadErrorRef.current,
+                  selectionSnapshot
+               );
+            }
+
+            return handled;
          },
          COMMAND_PRIORITY_EDITOR
       );
    }, [editor]);
 
    return null;
+}
+
+function insertInlineUploadPlaceholders(
+   editor: LexicalEditor,
+   files: File[],
+   uploadKind: 'file' | 'image',
+   selectionSnapshot: RangeSelection | null
+): NodeKey[] {
+   const placeholderKeys: NodeKey[] = [];
+
+   editor.update(() => {
+      if (selectionSnapshot) $setSelection(selectionSnapshot.clone());
+      const nodes: LexicalNode[] = [];
+
+      files.forEach((file) => {
+         const placeholder = $createInlineUploadPlaceholderNode({
+            fileName: file.name || '',
+            uploadKind,
+         });
+         placeholderKeys.push(placeholder.getKey());
+         nodes.push(placeholder, $createTextNode(' '));
+      });
+
+      if (nodes.length) $insertNodes(nodes);
+   });
+
+   return placeholderKeys;
+}
+
+function removeInlineUploadPlaceholder(placeholder: InlineUploadPlaceholderNode) {
+   const nextSibling = placeholder.getNextSibling();
+   placeholder.remove();
+   if ($isTextNode(nextSibling) && nextSibling.getTextContent() === ' ') nextSibling.remove();
 }
 
 async function uploadAndInsertInlineImages(
@@ -2227,21 +2860,72 @@ async function uploadAndInsertInlineImages(
    onUploadError: ((error: unknown) => void) | undefined,
    selectionSnapshot: RangeSelection | null
 ) {
+   const placeholderKeys = insertInlineUploadPlaceholders(editor, files, 'image', selectionSnapshot);
+
    try {
       const images = await uploadImages(files);
-      const validImages = images.filter((image) => image.src);
-      if (!validImages.length) return;
-
       editor.update(() => {
-         if (selectionSnapshot) $setSelection(selectionSnapshot.clone());
+         placeholderKeys.forEach((placeholderKey, index) => {
+            const placeholder = $getNodeByKey(placeholderKey);
+            if (!$isInlineUploadPlaceholderNode(placeholder)) return;
 
-         const nodes: LexicalNode[] = [];
-         validImages.forEach((image) => {
-            nodes.push($createInlineImageNode(image), $createTextNode(' '));
+            const image = images[index];
+            if (!image?.src) {
+               removeInlineUploadPlaceholder(placeholder);
+               return;
+            }
+
+            placeholder.replace(
+               $createInlineImageNode({
+                  ...image,
+                  altText: image.altText || files[index]?.name || '',
+               })
+            );
          });
-         $insertNodes(nodes);
       });
    } catch (error) {
+      editor.update(() => {
+         placeholderKeys.forEach((placeholderKey) => {
+            const placeholder = $getNodeByKey(placeholderKey);
+            if ($isInlineUploadPlaceholderNode(placeholder)) removeInlineUploadPlaceholder(placeholder);
+         });
+      });
+      onUploadError?.(error);
+   }
+}
+
+async function uploadAndInsertInlineFiles(
+   editor: LexicalEditor,
+   files: File[],
+   uploadFiles: (files: File[]) => Promise<DescriptionInlineFile[]>,
+   onUploadError: ((error: unknown) => void) | undefined,
+   selectionSnapshot: RangeSelection | null
+) {
+   const placeholderKeys = insertInlineUploadPlaceholders(editor, files, 'file', selectionSnapshot);
+
+   try {
+      const inlineFiles = await uploadFiles(files);
+      editor.update(() => {
+         placeholderKeys.forEach((placeholderKey, index) => {
+            const placeholder = $getNodeByKey(placeholderKey);
+            if (!$isInlineUploadPlaceholderNode(placeholder)) return;
+
+            const node = createInlineNodeFromUploadedFile(inlineFiles[index], files[index]);
+            if (!node) {
+               removeInlineUploadPlaceholder(placeholder);
+               return;
+            }
+
+            placeholder.replace(node);
+         });
+      });
+   } catch (error) {
+      editor.update(() => {
+         placeholderKeys.forEach((placeholderKey) => {
+            const placeholder = $getNodeByKey(placeholderKey);
+            if ($isInlineUploadPlaceholderNode(placeholder)) removeInlineUploadPlaceholder(placeholder);
+         });
+      });
       onUploadError?.(error);
    }
 }
@@ -2260,15 +2944,99 @@ function isSelectionAtEndOfBlock(selection: RangeSelection, block: HeadingNode) 
 }
 
 function isInlineImageFile(file: File) {
-   return (
-      file.type.toLowerCase().startsWith('image/') ||
-      ['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'svg'].includes(fileExtension(file.name))
-   );
+   return isInlineImageMimeType(file.type) || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'svg'].includes(fileExtension(file.name));
 }
 
 function fileExtension(name: string) {
    const extension = name.split('.').pop();
    return extension && extension !== name ? extension.toLowerCase() : '';
+}
+
+function isInlineImageMimeType(mimeType: string | null | undefined) {
+   return normalizeNullableText(mimeType)?.toLowerCase().startsWith('image/') || false;
+}
+
+function isInlineMediaMimeType(mimeType: string | null | undefined) {
+   const normalized = normalizeNullableText(mimeType)?.toLowerCase();
+   return normalized ? normalized.startsWith('audio/') || normalized.startsWith('video/') : false;
+}
+
+function inferInlineFileKind(
+   mimeType: string | null | undefined,
+   fileName: string | null | undefined,
+   kindHint: string | null | undefined
+): InlineFileKind {
+   if (kindHint === 'media') return 'media';
+   if (isInlineMediaMimeType(mimeType)) return 'media';
+
+   const extension = fileExtension(fileName || '');
+   if (['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac', 'mp4', 'mov', 'webm', 'mkv'].includes(extension)) {
+      return 'media';
+   }
+   return 'file';
+}
+
+function inlineFileDisplayName(name: string | null | undefined, src: string) {
+   const preferredName = name?.trim();
+   if (preferredName) return preferredName;
+
+   try {
+      const pathname = new URL(src, 'https://taskara.local').pathname;
+      const candidate = decodeURIComponent(pathname.split('/').filter(Boolean).pop() || '').trim();
+      return candidate || 'فایل';
+   } catch {
+      return 'فایل';
+   }
+}
+
+function formatFileSize(sizeBytes: number | null | undefined): string | null {
+   if (typeof sizeBytes !== 'number' || !Number.isFinite(sizeBytes) || sizeBytes <= 0) return null;
+   if (sizeBytes < 1024) return `${Math.round(sizeBytes)} B`;
+
+   const units = ['KB', 'MB', 'GB', 'TB'];
+   let value = sizeBytes / 1024;
+   let unit = units[0];
+   for (let index = 1; index < units.length && value >= 1024; index += 1) {
+      value /= 1024;
+      unit = units[index];
+   }
+
+   const precision = value >= 10 ? 1 : 2;
+   return `${value.toFixed(precision)} ${unit}`;
+}
+
+function sanitizeSizeBytes(sizeBytes: number | null | undefined): number | undefined {
+   return typeof sizeBytes === 'number' && Number.isFinite(sizeBytes) && sizeBytes > 0 ? Math.round(sizeBytes) : undefined;
+}
+
+function normalizeNullableText(value: string | null | undefined): string | undefined {
+   const trimmed = value?.trim();
+   return trimmed ? trimmed : undefined;
+}
+
+function createInlineNodeFromUploadedFile(inlineFile: DescriptionInlineFile | undefined, fallbackFile: File): LexicalNode | null {
+   if (!inlineFile?.src) return null;
+
+   const normalizedSrc = inlineFile.src.trim();
+   if (!normalizedSrc) return null;
+
+   const resolvedName = inlineFileDisplayName(inlineFile.name || fallbackFile.name, normalizedSrc);
+   const resolvedMimeType = normalizeNullableText(inlineFile.mimeType) || normalizeNullableText(fallbackFile.type);
+
+   if (isInlineImageMimeType(resolvedMimeType) || isInlineImageFile(fallbackFile)) {
+      return $createInlineImageNode({
+         altText: resolvedName,
+         src: normalizedSrc,
+      });
+   }
+
+   return $createInlineFileNode({
+      kind: inferInlineFileKind(resolvedMimeType, resolvedName, inlineFile.kind),
+      mimeType: resolvedMimeType,
+      name: resolvedName,
+      sizeBytes: sanitizeSizeBytes(inlineFile.sizeBytes) ?? sanitizeSizeBytes(fallbackFile.size),
+      src: normalizedSrc,
+   });
 }
 
 function positiveNumber(value: string | null | undefined): number | undefined {
@@ -2294,6 +3062,8 @@ export function DescriptionEditor({
    toolbarClassName,
    uploadInlineImages,
    onInlineImageUploadError,
+   uploadInlineFiles,
+   onInlineFileUploadError,
    users,
    variant = 'framed',
 }: DescriptionEditorProps) {
@@ -2313,6 +3083,8 @@ export function DescriptionEditor({
             TableRowNode,
             TableCellNode,
             InlineImageNode,
+            InlineFileNode,
+            InlineUploadPlaceholderNode,
             MentionNode,
          ],
          editorState: isSerializedEditorValue(initialValueRef.current)
@@ -2377,19 +3149,30 @@ export function DescriptionEditor({
                   <HistoryPlugin />
                   <ListPlugin />
                   <CheckListPlugin />
+                  <ChecklistRtlDirectionPlugin />
                   <PlaygroundTabIndentationPlugin maxIndent={7} />
                   {blockAnchorElem ? <DescriptionDraggableBlockPlugin anchorElem={blockAnchorElem} /> : null}
                   <MarkdownShortcutPlugin transformers={descriptionMarkdownTransformers} />
                   <HeadingEnterPlugin />
                   <TablePlugin hasCellMerge={false} hasHorizontalScroll hasTabHandler />
                   <MarkdownTablePastePlugin />
-                  <InlineImagesPlugin uploadImages={uploadInlineImages} onUploadError={onInlineImageUploadError} />
+                  <InlineAssetsPlugin
+                     onFileUploadError={onInlineFileUploadError}
+                     onImageUploadError={onInlineImageUploadError}
+                     uploadFiles={uploadInlineFiles}
+                     uploadImages={uploadInlineImages}
+                  />
                   <CompactChecklistShortcutPlugin />
                   <LinkPlugin />
                   <AutoLinkPlugin matchers={autoLinkMatchers} />
                   <MentionsPlugin users={users} />
                   <FloatingTextFormatToolbarPlugin />
-                  <SlashCommandsPlugin uploadImages={uploadInlineImages} onUploadError={onInlineImageUploadError} />
+                  <SlashCommandsPlugin
+                     onFileUploadError={onInlineFileUploadError}
+                     onImageUploadError={onInlineImageUploadError}
+                     uploadFiles={uploadInlineFiles}
+                     uploadImages={uploadInlineImages}
+                  />
                   <DescriptionEditorBridge
                      value={value}
                      onBlur={onBlur}
@@ -2400,7 +3183,12 @@ export function DescriptionEditor({
                   {autoFocus ? <AutoFocusPlugin defaultSelection="rootEnd" /> : null}
                </div>
             </ContextMenuTrigger>
-            <DescriptionContextMenu uploadImages={uploadInlineImages} onUploadError={onInlineImageUploadError} />
+            <DescriptionContextMenu
+               onFileUploadError={onInlineFileUploadError}
+               onImageUploadError={onInlineImageUploadError}
+               uploadFiles={uploadInlineFiles}
+               uploadImages={uploadInlineImages}
+            />
          </ContextMenu>
       </LexicalComposer>
    );

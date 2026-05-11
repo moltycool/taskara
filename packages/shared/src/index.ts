@@ -242,10 +242,33 @@ export const taskListQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).default(0)
 });
 
+const announcementPollOptionSchema = z.string().trim().min(1).max(160);
+
+export const announcementPollSchema = z.object({
+  question: z.string().trim().min(1).max(300),
+  options: z.array(announcementPollOptionSchema).min(2).max(12),
+  allowMultiple: z.boolean().default(false)
+}).superRefine((value, ctx) => {
+  const seen = new Set<string>();
+  value.options.forEach((option, index) => {
+    const normalized = option.toLocaleLowerCase();
+    if (seen.has(normalized)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['options', index],
+        message: 'Poll options must be unique'
+      });
+      return;
+    }
+    seen.add(normalized);
+  });
+});
+
 export const createAnnouncementSchema = z.object({
   title: z.string().trim().min(1).max(300),
   body: z.string().trim().max(15000).optional(),
   recipientIds: z.array(z.string().uuid()).max(500).default([]),
+  poll: announcementPollSchema.optional(),
   publish: z.boolean().default(false)
 }).superRefine((value, ctx) => {
   if (value.publish && value.recipientIds.length === 0) {
@@ -262,6 +285,23 @@ export const updateAnnouncementSchema = z.object({
   body: z.string().trim().max(15000).nullable().optional(),
   recipientIds: z.array(z.string().uuid()).max(500).optional(),
   status: announcementStatusSchema.optional()
+});
+
+export const announcementPollVoteSchema = z.object({
+  optionIds: z.array(z.string().uuid()).min(1).max(12)
+}).superRefine((value, ctx) => {
+  const seen = new Set<string>();
+  value.optionIds.forEach((optionId, index) => {
+    if (seen.has(optionId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['optionIds', index],
+        message: 'Duplicate option ids are not allowed'
+      });
+      return;
+    }
+    seen.add(optionId);
+  });
 });
 
 export const announcementListQuerySchema = z.object({

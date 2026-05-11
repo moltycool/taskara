@@ -10,7 +10,6 @@ import {
    CommandSeparator,
    CommandShortcut,
 } from '@/components/ui/command';
-import { Button } from '@/components/ui/button';
 import {
    Dialog,
    DialogContent,
@@ -25,7 +24,6 @@ import { fa } from '@/lib/fa-copy';
 import { useWorkspaceTaskSync } from '@/lib/task-sync-provider';
 import { taskaraRequest } from '@/lib/taskara-client';
 import type { PaginatedResponse, TaskaraKnowledgePage, TaskaraTask, TaskaraView } from '@/lib/taskara-types';
-import { areDesktopNotificationsEnabled, setDesktopNotificationsEnabled as persistDesktopNotificationsEnabled } from '@/lib/notification-service-worker';
 import { cn } from '@/lib/utils';
 import { Activity, Bell, BookOpen, CalendarDays, FileText, FolderKanban, LayoutTemplate, ListTodo, Megaphone, Plus, Search, Settings, Trophy, Users, UsersRound } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -35,71 +33,6 @@ interface MainLayoutProps {
    header?: React.ReactNode;
    headersNumber?: 1 | 2;
    showSidebar?: boolean;
-}
-
-const NOTIFICATION_PROMPT_DISMISSED_STORAGE_KEY = 'taskara.notifications.prompt.dismissed.v1';
-
-type BrowserNotificationHelp = {
-   title: string;
-   steps: string[];
-};
-
-function detectBrowserForNotificationHelp(userAgent: string): 'edge' | 'chrome' | 'firefox' | 'safari' | 'other' {
-   if (/Edg\//i.test(userAgent)) return 'edge';
-   if (/Firefox\//i.test(userAgent)) return 'firefox';
-   if (/Safari\//i.test(userAgent) && !/Chrome\//i.test(userAgent) && !/Chromium\//i.test(userAgent)) return 'safari';
-   if (/Chrome\//i.test(userAgent) || /Chromium\//i.test(userAgent)) return 'chrome';
-   return 'other';
-}
-
-function getBrowserNotificationHelp(browser: 'edge' | 'chrome' | 'firefox' | 'safari' | 'other'): BrowserNotificationHelp {
-   switch (browser) {
-      case 'edge':
-         return {
-            title: 'Microsoft Edge',
-            steps: [
-               'روی آیکن قفل کنار نوار آدرس کلیک کن.',
-               'گزینه Notifications را روی Allow قرار بده.',
-               'صفحه را یک‌بار رفرش کن.',
-            ],
-         };
-      case 'firefox':
-         return {
-            title: 'Mozilla Firefox',
-            steps: [
-               'روی آیکن قفل کنار آدرس سایت کلیک کن.',
-               'در بخش Permissions، اعلان‌ها را روی Allow قرار بده.',
-               'صفحه را یک‌بار رفرش کن و دوباره فعال‌سازی را بزن.',
-            ],
-         };
-      case 'safari':
-         return {
-            title: 'Safari',
-            steps: [
-               'از منوی Safari گزینه Settings for This Website را باز کن.',
-               'Notifications را روی Allow قرار بده.',
-               'صفحه را یک‌بار رفرش کن.',
-            ],
-         };
-      case 'chrome':
-         return {
-            title: 'Google Chrome',
-            steps: [
-               'روی آیکن قفل کنار نوار آدرس کلیک کن.',
-               'گزینه Notifications را روی Allow قرار بده.',
-               'صفحه را یک‌بار رفرش کن.',
-            ],
-         };
-      default:
-         return {
-            title: 'مرورگر',
-            steps: [
-               'تنظیمات مجوز سایت را از کنار نوار آدرس باز کن.',
-               'اعلان‌ها (Notifications) را روی Allow قرار بده.',
-               'صفحه را رفرش کن و دوباره فعال‌سازی را بزن.',
-            ],
-         };
-   }
 }
 
 const isEmptyHeader = (header: React.ReactNode | undefined): boolean => {
@@ -180,10 +113,6 @@ export default function MainLayout({ children, header, headersNumber = 2, showSi
    const [commandQuery, setCommandQuery] = React.useState('');
    const [knowledgeResults, setKnowledgeResults] = React.useState<TaskaraKnowledgePage[]>([]);
    const [shortcutsOpen, setShortcutsOpen] = React.useState(false);
-   const [notificationPromptOpen, setNotificationPromptOpen] = React.useState(false);
-   const [notificationPromptDontShowAgain, setNotificationPromptDontShowAgain] = React.useState(false);
-   const [notificationPromptError, setNotificationPromptError] = React.useState('');
-   const [notificationPermission, setNotificationPermission] = React.useState<NotificationPermission | 'unsupported'>('unsupported');
    const pathParts = location.pathname.split('/').filter(Boolean);
    const orgId = pathParts[0] || 'taskara';
    const routeKey = pathParts[1] || 'team';
@@ -193,11 +122,6 @@ export default function MainLayout({ children, header, headersNumber = 2, showSi
       location.pathname.endsWith('/projects') || (pathParts[1] === 'team' && pathParts[3] === 'projects');
 
    const pageOwnsScroll = ['announcements', 'heartbeat', 'inbox', 'issue', 'meetings', 'projects', 'settings', 'tasks', 'team', 'wiki'].includes(routeKey);
-   const browserNotificationHelp = React.useMemo(() => {
-      if (typeof navigator === 'undefined') return getBrowserNotificationHelp('other');
-      return getBrowserNotificationHelp(detectBrowserForNotificationHelp(navigator.userAgent));
-   }, []);
-
    const height = {
       1: 'h-[calc(100dvh-40px)] lg:h-[calc(100dvh-48px)]',
       2: 'h-[calc(100dvh-80px)] lg:h-[calc(100dvh-88px)]',
@@ -221,62 +145,6 @@ export default function MainLayout({ children, header, headersNumber = 2, showSi
       }
       window.setTimeout(() => window.dispatchEvent(new CustomEvent('taskara:create-project')), 0);
    }, [activeTeamSlug, isProjectsRoute, navigate, orgId]);
-
-   const persistNotificationPromptDismissed = React.useCallback((dismissed: boolean) => {
-      if (typeof window === 'undefined') return;
-
-      try {
-         if (dismissed) {
-            window.localStorage.setItem(NOTIFICATION_PROMPT_DISMISSED_STORAGE_KEY, '1');
-            return;
-         }
-
-         window.localStorage.removeItem(NOTIFICATION_PROMPT_DISMISSED_STORAGE_KEY);
-      } catch {
-         // Ignore localStorage failures.
-      }
-   }, []);
-
-   const closeNotificationPrompt = React.useCallback(() => {
-      if (notificationPromptDontShowAgain) {
-         persistNotificationPromptDismissed(true);
-      }
-      setNotificationPromptOpen(false);
-   }, [notificationPromptDontShowAgain, persistNotificationPromptDismissed]);
-
-   const handleEnableNotifications = React.useCallback(async () => {
-      if (typeof window === 'undefined') return;
-
-      setNotificationPromptError('');
-
-      if (!('Notification' in window)) {
-         setNotificationPermission('unsupported');
-         setNotificationPromptError('مرورگر شما از اعلان دسکتاپ پشتیبانی نمی‌کند.');
-         return;
-      }
-
-      if (window.Notification.permission === 'denied') {
-         setNotificationPermission('denied');
-         persistDesktopNotificationsEnabled(true);
-         setNotificationPromptError('مجوز اعلان مرورگر مسدود است. راهنمای مرورگر پایین را انجام بده و صفحه را رفرش کن.');
-         return;
-      }
-
-      let permission: NotificationPermission = window.Notification.permission;
-      if (permission !== 'granted') {
-         permission = await window.Notification.requestPermission();
-      }
-
-      setNotificationPermission(permission);
-
-      if (permission === 'granted') {
-         persistDesktopNotificationsEnabled(true);
-         closeNotificationPrompt();
-         return;
-      }
-
-      setNotificationPromptError('مجوز اعلان تایید نشد. می‌توانی بعدا دوباره امتحان کنی.');
-   }, [closeNotificationPrompt]);
 
    React.useEffect(() => {
       const handleKeyDown = (event: KeyboardEvent) => {
@@ -305,48 +173,6 @@ export default function MainLayout({ children, header, headersNumber = 2, showSi
          window.removeEventListener('taskara:keyboard-shortcuts', openShortcuts);
       };
    }, [isEditableTarget]);
-
-   React.useEffect(() => {
-      if (typeof window === 'undefined') return;
-
-      const supported = 'Notification' in window;
-      const permission = supported ? window.Notification.permission : 'unsupported';
-      setNotificationPermission(permission);
-
-      if (!supported) return;
-      if (permission === 'granted') return;
-      if (!areDesktopNotificationsEnabled()) return;
-
-      let dismissed = false;
-      try {
-         dismissed = window.localStorage.getItem(NOTIFICATION_PROMPT_DISMISSED_STORAGE_KEY) === '1';
-      } catch {
-         dismissed = false;
-      }
-      if (dismissed) return;
-
-      setNotificationPromptOpen(true);
-   }, []);
-
-   React.useEffect(() => {
-      if (typeof window === 'undefined' || !('Notification' in window)) return;
-
-      const refreshPermission = () => {
-         const permission = window.Notification.permission;
-         setNotificationPermission(permission);
-         if (permission === 'granted') {
-            setNotificationPromptOpen(false);
-         }
-      };
-
-      window.addEventListener('focus', refreshPermission);
-      document.addEventListener('visibilitychange', refreshPermission);
-
-      return () => {
-         window.removeEventListener('focus', refreshPermission);
-         document.removeEventListener('visibilitychange', refreshPermission);
-      };
-   }, []);
 
    React.useEffect(() => {
       if (!commandOpen) {
@@ -915,82 +741,6 @@ export default function MainLayout({ children, header, headersNumber = 2, showSi
                         <ShortcutKey>{shortcut}</ShortcutKey>
                      </div>
                   ))}
-               </div>
-            </DialogContent>
-         </Dialog>
-         <Dialog
-            open={notificationPromptOpen}
-            onOpenChange={(open) => {
-               if (!open && notificationPromptDontShowAgain) {
-                  persistNotificationPromptDismissed(true);
-               }
-               if (open) {
-                  setNotificationPromptError('');
-               }
-               setNotificationPromptOpen(open);
-            }}
-         >
-            <DialogContent
-               aria-label="فعال‌سازی اعلان دسکتاپ"
-               className="max-w-[560px] border-white/10 bg-[#1d1d20] text-zinc-200"
-            >
-               <DialogHeader className="text-right">
-                  <DialogTitle className="text-zinc-100">فعال‌سازی اعلان دسکتاپ</DialogTitle>
-                  <DialogDescription className="leading-6 text-zinc-400">
-                     برای دیدن اعلان‌های جدید حتی بیرون از تب Taskara، دسترسی اعلان را برای این سایت فعال کن.
-                  </DialogDescription>
-               </DialogHeader>
-               <div className="space-y-3 text-sm">
-                  <div className="rounded-md border border-white/10 bg-white/[0.02] px-3 py-2 text-zinc-300">
-                     وضعیت فعلی:{' '}
-                     {notificationPermission === 'unsupported'
-                        ? 'پشتیبانی نمی‌شود'
-                        : notificationPermission === 'granted'
-                           ? 'مجوز داده شده'
-                           : notificationPermission === 'denied'
-                              ? 'مجوز مسدود است'
-                              : 'نیازمند مجوز'}
-                  </div>
-                  <div className="rounded-md border border-white/10 bg-white/[0.02] px-3 py-3">
-                     <div className="font-medium text-zinc-100">راهنمای مرورگر ({browserNotificationHelp.title})</div>
-                     <ol className="mt-2 list-decimal space-y-1 pr-5 text-zinc-400">
-                        {browserNotificationHelp.steps.map((step) => (
-                           <li key={step}>{step}</li>
-                        ))}
-                     </ol>
-                  </div>
-                  {notificationPromptError ? (
-                     <div className="rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-rose-300">
-                        {notificationPromptError}
-                     </div>
-                  ) : null}
-                  <label className="flex cursor-pointer items-center gap-2 text-zinc-300" htmlFor="notification-prompt-dismiss">
-                     <input
-                        id="notification-prompt-dismiss"
-                        checked={notificationPromptDontShowAgain}
-                        className="size-4 rounded border border-white/20 bg-transparent accent-zinc-100"
-                        type="checkbox"
-                        onChange={(event) => setNotificationPromptDontShowAgain(event.target.checked)}
-                     />
-                     <span>
-                        دیگه این پیام رو نمایش نده
-                     </span>
-                  </label>
-                  <div className="flex items-center justify-end gap-2">
-                     <Button
-                        className="border-white/10 bg-transparent text-zinc-300 hover:bg-white/8 hover:text-zinc-100"
-                        variant="outline"
-                        onClick={closeNotificationPrompt}
-                     >
-                        فعلا نه
-                     </Button>
-                     <Button
-                        className="border border-white/10 bg-zinc-100 text-zinc-950 hover:bg-white"
-                        onClick={() => void handleEnableNotifications()}
-                     >
-                        فعال‌سازی اعلان
-                     </Button>
-                  </div>
                </div>
             </DialogContent>
          </Dialog>

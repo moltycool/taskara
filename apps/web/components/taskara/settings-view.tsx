@@ -26,13 +26,11 @@ import { LinearAvatar } from '@/components/taskara/linear-ui';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { taskaraRequest, uploadMedia } from '@/lib/taskara-client';
 import { downloadTaskaraFile } from '@/lib/download-file';
 import { formatJalaliDateTime } from '@/lib/jalali';
-import { areDesktopNotificationsEnabled, setDesktopNotificationsEnabled as persistDesktopNotificationsEnabled } from '@/lib/notification-service-worker';
 import { RoleBadge, workspaceRoles } from '@/lib/taskara-presenters';
 import type { PaginatedResponse, TaskaraMe, TaskaraProject, TaskaraUser } from '@/lib/taskara-types';
 import { fa } from '@/lib/fa-copy';
@@ -211,8 +209,6 @@ function ProfileSettingsPage() {
    const [projects, setProjects] = useState<TaskaraProject[]>([]);
    const [selectedRaycastProjectId, setSelectedRaycastProjectId] = useState('');
    const [downloadingScript, setDownloadingScript] = useState<'taskara' | 'open' | null>(null);
-   const [desktopNotificationsEnabled, setDesktopNotificationsEnabled] = useState(true);
-   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'unsupported'>('unsupported');
    const [error, setError] = useState('');
    const [notice, setNotice] = useState('');
 
@@ -246,25 +242,6 @@ function ProfileSettingsPage() {
 
       return () => {
          cancelled = true;
-      };
-   }, []);
-
-   useEffect(() => {
-      if (typeof window === 'undefined') return;
-      const supported = 'Notification' in window;
-      setDesktopNotificationsEnabled(areDesktopNotificationsEnabled());
-      setNotificationPermission(supported ? window.Notification.permission : 'unsupported');
-   }, []);
-
-   useEffect(() => {
-      if (typeof window === 'undefined' || !('Notification' in window)) return;
-
-      const refreshPermission = () => setNotificationPermission(window.Notification.permission);
-      window.addEventListener('focus', refreshPermission);
-      document.addEventListener('visibilitychange', refreshPermission);
-      return () => {
-         window.removeEventListener('focus', refreshPermission);
-         document.removeEventListener('visibilitychange', refreshPermission);
       };
    }, []);
 
@@ -376,44 +353,6 @@ function ProfileSettingsPage() {
       } finally {
          setSaving(false);
       }
-   }
-
-   async function handleDesktopNotificationsToggle(checked: boolean) {
-      if (typeof window === 'undefined') return;
-
-      if (!('Notification' in window)) {
-         setError('مرورگر شما از اعلان دسکتاپ پشتیبانی نمی‌کند.');
-         return;
-      }
-
-      setError('');
-      setNotice('');
-
-      if (checked) {
-         if (window.Notification.permission === 'denied') {
-            setNotificationPermission('denied');
-            persistDesktopNotificationsEnabled(true);
-            setDesktopNotificationsEnabled(true);
-            setError('اعلان در برنامه فعال شد، اما مجوز مرورگر مسدود است. برای دریافت اعلان سیستمی، مجوز سایت را در مرورگر Allow کنید.');
-            return;
-         }
-
-         if (window.Notification.permission !== 'granted') {
-            const permission = await window.Notification.requestPermission();
-            setNotificationPermission(permission);
-            if (permission !== 'granted') {
-               persistDesktopNotificationsEnabled(false);
-               setDesktopNotificationsEnabled(false);
-               setError('مجوز اعلان تأیید نشد.');
-               return;
-            }
-         }
-      }
-
-      persistDesktopNotificationsEnabled(checked);
-      setDesktopNotificationsEnabled(checked);
-      setNotificationPermission(window.Notification.permission);
-      setNotice(checked ? 'اعلان دسکتاپ فعال شد.' : 'اعلان دسکتاپ غیرفعال شد.');
    }
 
    return (
@@ -565,40 +504,6 @@ function ProfileSettingsPage() {
                      {downloadingScript === 'open' ? <Loader2 className="size-4 animate-spin" /> : <ExternalLink className="size-4" />}
                      دانلود open-taskara.bash
                   </Button>
-               </div>
-            </SettingsPanel>
-
-            <SettingsPanel title="نوتیفیکیشن‌ها">
-               <SettingsField
-                  className="sm:grid-cols-[minmax(0,1fr)_auto]"
-                  label="اعلان دسکتاپ"
-                  description="برای نمایش اعلان جدید خارج از تب برنامه. خاموش کردن این گزینه نمایش اعلان سیستمی را متوقف می‌کند."
-               >
-                  <div className="flex items-center gap-3">
-                     {notificationPermission !== 'granted' ? (
-                        <div className="text-xs text-zinc-500">
-                           {notificationPermission === 'unsupported'
-                              ? 'پشتیبانی نمی‌شود'
-                              : notificationPermission === 'denied'
-                                 ? 'مجوز مسدود است'
-                                 : 'نیازمند مجوز'}
-                        </div>
-                     ) : null}
-                     <Switch checked={desktopNotificationsEnabled} onCheckedChange={(checked) => void handleDesktopNotificationsToggle(checked)} />
-                  </div>
-               </SettingsField>
-               <div className="border-t border-white/7 px-4 py-3">
-                  <div className="rounded-md border border-white/10 bg-white/[0.02] px-3 py-3 text-sm text-zinc-300">
-                     <div className="font-medium text-zinc-200">راهنمای فعال‌سازی</div>
-                     <p className="mt-2 leading-7 text-zinc-400">
-                        اگر وضعیت روی «مجوز مسدود است» بود، اعلان برنامه روشن است اما مرورگر اجازه نمایش اعلان سیستمی نمی‌دهد.
-                     </p>
-                     <ol className="mt-2 list-decimal space-y-1 pr-5 text-zinc-400">
-                        <li>روی علامت قفل کنار آدرس سایت بزن.</li>
-                        <li>گزینه Notifications را روی Allow قرار بده.</li>
-                        <li>صفحه را یک‌بار رفرش کن.</li>
-                     </ol>
-                  </div>
                </div>
             </SettingsPanel>
 

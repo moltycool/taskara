@@ -11,21 +11,13 @@ interface KavenegarResponse {
 
 export async function sendOTPSms(to: string, otp: number): Promise<void> {
   if (isSmsDryRun()) {
-    console.log('DEV OTP SMS:', { to, otp });
     return;
   }
 
-  const response = await requestKavenegar('verify/lookup.json', {
+  await requestKavenegar('verify/lookup.json', {
     receptor: to,
     token: otp,
     template: 'otp-dastak'
-  });
-
-  console.log('SMS sent successfully:', {
-    messageId: response.entries?.[0]?.messageid,
-    status: response.entries?.[0]?.statustext,
-    receptor: response.entries?.[0]?.receptor,
-    message: response.entries?.[0]?.message
   });
 }
 
@@ -50,12 +42,10 @@ export async function sendMessageSimple(
   if (hide) params.hide = hide;
 
   if (isSmsDryRun()) {
-    console.log('DEV SIMPLE SMS:', params);
     return;
   }
 
-  const response = await requestKavenegar('sms/send.json', params);
-  console.log('SMS sent successfully:', { entries: response.entries });
+  await requestKavenegar('sms/send.json', params);
 }
 
 export function sendMessageToAdmin(message: string): Promise<void> {

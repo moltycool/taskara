@@ -21,7 +21,7 @@ import { registerTaskRoutes } from './routes/tasks';
 import { registerTeamRoutes } from './routes/teams';
 import { registerUserRoutes } from './routes/users';
 import { registerViewRoutes } from './routes/views';
-import { HttpError } from './services/http';
+import { errorMessage, statusCodeFromError } from './services/http';
 import { startSyncEventPoller } from './services/sync';
 
 export async function registerApp(app: FastifyInstance): Promise<void> {
@@ -53,8 +53,8 @@ export async function registerApp(app: FastifyInstance): Promise<void> {
       });
     }
 
-    const message = error instanceof Error ? error.message : 'Internal server error';
-    const status = error instanceof HttpError ? error.statusCode : message.includes('not found') ? 404 : 500;
+    const message = errorMessage(error);
+    const status = statusCodeFromError(error, message);
     app.log.error(error);
     return reply.code(status).send({ message });
   });

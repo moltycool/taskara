@@ -29,13 +29,19 @@ export function buildMediaUrl(object: string): string {
     throw new HttpError(503, 'TASKARA_CDN_MEDIA_BASE_URL is required for media URLs');
   }
 
-  const baseUrl = config.TASKARA_CDN_MEDIA_BASE_URL.replace(/\/+$/, '');
+  return buildMediaUrlFromBase(config.TASKARA_CDN_MEDIA_BASE_URL, object);
+}
+
+export function buildMediaUrlFromBase(baseUrl: string, object: string): string {
+  if (/^https?:\/\//i.test(object)) return object;
+
+  const normalizedBaseUrl = baseUrl.replace(/\/+$/, '').replace(/\/v1\/media$/i, '');
   const normalizedObject = object.replace(/^\/+/, '');
   if (normalizedObject.startsWith('v1/media/')) {
-    return `${baseUrl}/${normalizedObject}`;
+    return `${normalizedBaseUrl}/${normalizedObject}`;
   }
 
-  return `${baseUrl}/v1/media/${normalizedObject}`;
+  return `${normalizedBaseUrl}/v1/media/${normalizedObject}`;
 }
 
 export async function uploadMediaToCdn(input: MediaUploadInput): Promise<UploadedMediaObject> {

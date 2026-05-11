@@ -3,7 +3,9 @@ import { config } from './config';
 import { registerApp } from './app';
 
 const app = Fastify({
-  logger: true,
+  logger: {
+    level: 'warn'
+  },
   bodyLimit: config.TASKARA_UPLOAD_MAX_BYTES
 });
 

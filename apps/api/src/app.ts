@@ -1,6 +1,5 @@
 import cors from '@fastify/cors';
 import formbody from '@fastify/formbody';
-import multipart from '@fastify/multipart';
 import type { FastifyInstance } from 'fastify';
 import { ZodError } from 'zod';
 import { config } from './config';
@@ -38,12 +37,6 @@ export async function registerApp(app: FastifyInstance): Promise<void> {
     credentials: true
   });
   await app.register(formbody);
-  await app.register(multipart, {
-    limits: {
-      fileSize: config.TASKARA_UPLOAD_MAX_BYTES,
-      files: 1
-    }
-  });
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ZodError) {

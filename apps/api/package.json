@@ -12,7 +12,6 @@
   "dependencies": {
     "@fastify/cors": "^10.1.0",
     "@fastify/formbody": "^8.0.2",
-    "@fastify/multipart": "^10.0.0",
     "@taskara/db": "workspace:*",
     "@taskara/shared": "workspace:*",
     "fastify": "^5.3.2",

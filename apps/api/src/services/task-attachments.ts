@@ -2,7 +2,7 @@ import { prisma, type Prisma, type SyncEvent, type TaskAttachment } from '@taska
 import type { RequestActor } from './actor';
 import { logActivity } from './audit';
 import { HttpError } from './http';
-import { buildMediaUrl, uploadMediaToCdn, type MediaUploadInput } from './media';
+import { buildMediaUrl, type UploadedMediaObject } from './media';
 import { appendSyncEvent, publishSyncEvent } from './sync';
 
 export type TaskAttachmentResponse = TaskAttachment & { url: string };
@@ -43,13 +43,12 @@ export async function listTaskAttachments(actor: RequestActor, taskId: string): 
 export async function createTaskAttachment(
   actor: RequestActor,
   taskId: string,
-  upload: MediaUploadInput,
+  media: UploadedMediaObject,
   commentId?: string
 ): Promise<TaskAttachmentResponse> {
   const task = await ensureTaskInWorkspace(actor.workspace.id, taskId);
   if (commentId) await ensureCommentForTask(taskId, commentId);
 
-  const media = await uploadMediaToCdn(upload);
   let syncEvent: SyncEvent | null = null;
   const attachment = await prisma.$transaction(async (tx) => {
     const attachment = await tx.taskAttachment.create({

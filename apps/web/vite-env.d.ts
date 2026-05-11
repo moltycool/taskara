@@ -2,6 +2,9 @@
 
 interface ImportMetaEnv {
    readonly VITE_TASKARA_API_URL?: string;
+   readonly VITE_TASKARA_CDN_UPLOAD_URL?: string;
+   readonly VITE_TASKARA_CDN_MEDIA_BASE_URL?: string;
+   readonly VITE_TASKARA_CDN_APP?: string;
    readonly VITE_TASKARA_AVATAR_URL_TEMPLATE?: string;
    readonly VITE_TASKARA_EXAMPLE_REPOSITORY_URL?: string;
    readonly VITE_TASKARA_HELP_X_URL?: string;
@@ -17,5 +20,11 @@ interface Window {
    __TASKARA_CONFIG__?: {
       TASKARA_API_URL?: string;
       VITE_TASKARA_API_URL?: string;
+      TASKARA_CDN_UPLOAD_URL?: string;
+      VITE_TASKARA_CDN_UPLOAD_URL?: string;
+      TASKARA_CDN_MEDIA_BASE_URL?: string;
+      VITE_TASKARA_CDN_MEDIA_BASE_URL?: string;
+      TASKARA_CDN_APP?: string;
+      VITE_TASKARA_CDN_APP?: string;
    };
 }

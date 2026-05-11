@@ -21,7 +21,7 @@ export class TaskaraClientError extends Error {
 }
 
 export function taskaraApiBaseUrl(): string {
-   return requiredViteEnv('VITE_TASKARA_API_URL').replace(/\/$/, '');
+   return requiredClientEnv(['TASKARA_API_URL', 'VITE_TASKARA_API_URL']).replace(/\/$/, '');
 }
 
 export function taskaraRequestHeaders(init: RequestInit = {}): Headers {
@@ -101,76 +101,137 @@ function unexpectedApiResponseMessage(response: Response, apiBaseUrl: string): s
    return `Expected JSON from Taskara API, but received ${contentType}. Check VITE_TASKARA_API_URL; it should point to the API server (${apiBaseUrl}), not the web server.`;
 }
 
-function requiredViteEnv(name: string): string {
-   const runtimeValue = runtimeEnvValue(name);
-   if (runtimeValue) return runtimeValue;
-
-   const value = import.meta.env[name];
-   if (typeof value === 'string' && value.trim()) return value.trim();
-   throw new Error(`${name} is required`);
+function requiredClientEnv(names: string[]): string {
+   const value = clientEnvValue(names);
+   if (value) return value;
+   throw new Error(`${names[0]} is required`);
 }
 
-function runtimeEnvValue(name: string): string | undefined {
-   if (typeof window === 'undefined') return undefined;
+function clientEnvValue(names: string[]): string | undefined {
+   const config = typeof window === 'undefined' ? undefined : window.__TASKARA_CONFIG__;
+   for (const name of names) {
+      const runtimeValue = config?.[name as keyof typeof config];
+      if (typeof runtimeValue === 'string' && runtimeValue.trim()) return runtimeValue.trim();
 
-   const config = window.__TASKARA_CONFIG__;
-   const value =
-      name === 'VITE_TASKARA_API_URL' ? config?.TASKARA_API_URL || config?.VITE_TASKARA_API_URL : undefined;
-   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+      const buildValue = (import.meta.env as Record<string, unknown>)[name];
+      if (typeof buildValue === 'string' && buildValue.trim()) return buildValue.trim();
+   }
+
+   return undefined;
 }
 
-export function uploadTaskAttachment(task: string, file: File, name = file.name): Promise<TaskaraAttachment> {
-   const form = new FormData();
-   form.set('name', name);
-   form.set('file', file, file.name);
-
+export async function uploadTaskAttachment(task: string, file: File, name = file.name): Promise<TaskaraAttachment> {
+   const media = await uploadMedia(file, name);
    return taskaraRequest<TaskaraAttachment>(`/tasks/${encodeURIComponent(task)}/attachments`, {
       method: 'POST',
-      body: form,
+      body: attachmentRegistrationBody(media),
    });
 }
 
-export function uploadTaskCommentAttachment(
+export async function uploadTaskCommentAttachment(
    task: string,
    commentId: string,
    file: File,
    name = file.name
 ): Promise<TaskaraAttachment> {
-   const form = new FormData();
-   form.set('name', name);
-   form.set('file', file, file.name);
-
+   const media = await uploadMedia(file, name);
    return taskaraRequest<TaskaraAttachment>(
       `/tasks/${encodeURIComponent(task)}/comments/${encodeURIComponent(commentId)}/attachments`,
       {
          method: 'POST',
-         body: form,
+         body: attachmentRegistrationBody(media),
       }
    );
 }
 
-export function uploadMedia(file: File, name = file.name): Promise<UploadedMediaObject> {
+export async function uploadMedia(file: File, name = file.name): Promise<UploadedMediaObject> {
    const form = new FormData();
    form.set('name', name);
+   form.set('app', clientEnvValue(['TASKARA_CDN_APP', 'VITE_TASKARA_CDN_APP']) || 'taskara');
    form.set('file', file, file.name);
 
-   return taskaraRequest<UploadedMediaObject>('/uploads', {
+   const response = await fetch(requiredClientEnv(['TASKARA_CDN_UPLOAD_URL', 'VITE_TASKARA_CDN_UPLOAD_URL']), {
       method: 'POST',
       body: form,
    });
+
+   const text = await response.text();
+   const data = text ? parseOptionalJson(text) : undefined;
+
+   if (!response.ok) {
+      throw new TaskaraClientError(
+         errorMessageFromResponse(data) || `CDN upload failed with ${response.status} ${response.statusText}`,
+         response.status
+      );
+   }
+
+   return normalizeCdnUploadResponse(data, file, name);
 }
 
-export function uploadKnowledgePageAttachment(
+export async function uploadKnowledgePageAttachment(
    pageId: string,
    file: File,
    name = file.name
 ): Promise<TaskaraKnowledgeAttachment> {
-   const form = new FormData();
-   form.set('name', name);
-   form.set('file', file, file.name);
-
+   const media = await uploadMedia(file, name);
    return taskaraRequest<TaskaraKnowledgeAttachment>(`/knowledge/pages/${encodeURIComponent(pageId)}/attachments`, {
       method: 'POST',
-      body: form,
+      body: attachmentRegistrationBody(media),
    });
+}
+
+function attachmentRegistrationBody(media: UploadedMediaObject): string {
+   return JSON.stringify({
+      documentId: media.documentId,
+      object: media.object,
+      url: media.url,
+      name: media.name,
+      mimeType: media.mimeType,
+      sizeBytes: media.sizeBytes,
+   });
+}
+
+function normalizeCdnUploadResponse(data: unknown, file: File, name: string): UploadedMediaObject {
+   if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      throw new TaskaraClientError('CDN upload response was invalid.');
+   }
+
+   const record = data as Record<string, unknown>;
+   const documentId = stringValue(record.documentId) || stringValue(record.id);
+   const responseObject = stringValue(record.object);
+   const responseUrl = stringValue(record.url);
+   const object = responseObject || documentId || responseUrl;
+   if (!object) throw new TaskaraClientError('CDN upload response did not include a document id or object.');
+
+   const url = responseUrl || buildClientMediaUrl(object);
+   return {
+      documentId,
+      object,
+      url,
+      name: name.trim() || file.name,
+      mimeType: file.type || stringValue(record.mimeType),
+      sizeBytes: file.size,
+   };
+}
+
+function buildClientMediaUrl(object: string): string {
+   if (/^https?:\/\//i.test(object)) return object;
+
+   const mediaBaseUrl = requiredClientEnv(['TASKARA_CDN_MEDIA_BASE_URL', 'VITE_TASKARA_CDN_MEDIA_BASE_URL']);
+   const normalizedBaseUrl = mediaBaseUrl.replace(/\/+$/, '').replace(/\/v1\/media$/i, '');
+   const normalizedObject = object.replace(/^\/+/, '');
+   if (normalizedObject.startsWith('v1/media/')) return `${normalizedBaseUrl}/${normalizedObject}`;
+   return `${normalizedBaseUrl}/v1/media/${normalizedObject}`;
+}
+
+function parseOptionalJson(text: string): unknown {
+   try {
+      return JSON.parse(text);
+   } catch {
+      return undefined;
+   }
+}
+
+function stringValue(value: unknown): string | undefined {
+   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }

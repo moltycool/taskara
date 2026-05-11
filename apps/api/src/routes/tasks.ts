@@ -4,6 +4,7 @@ import { createCommentSchema, createTaskSchema, taskListQuerySchema, updateTaskS
 import { z } from 'zod';
 import { getRequestActor } from '../services/actor';
 import { HttpError } from '../services/http';
+import { normalizeUploadedMediaInput, uploadedMediaInputSchema } from '../services/media';
 import { createTaskAttachment, listTaskAttachments } from '../services/task-attachments';
 import { assertActorCanAccessTeamSlug, listAccessibleTeamIds } from '../services/team-access';
 import { sendTaskCreatedSms, sendTaskFollowUpSms } from '../services/task-sms';
@@ -17,7 +18,6 @@ import {
   taskInclude,
   updateTask
 } from '../services/tasks';
-import { readMultipartMediaUpload } from '../services/upload-request';
 
 const leaderboardQuerySchema = z.object({
   startsAt: z.string().datetime({ offset: true }),
@@ -272,8 +272,8 @@ export async function registerTaskRoutes(app: FastifyInstance): Promise<void> {
     const existing = await findTaskByIdOrKey(actor.workspace.id, idOrKey, accessibleTeamIds);
     if (!existing) return reply.code(404).send({ message: 'Task not found' });
 
-    const upload = await readMultipartMediaUpload(request);
-    const attachment = await createTaskAttachment(actor, existing.id, upload);
+    const media = normalizeUploadedMediaInput(uploadedMediaInputSchema.parse(request.body));
+    const attachment = await createTaskAttachment(actor, existing.id, media);
     return reply.code(201).send(attachment);
   });
 
@@ -318,8 +318,8 @@ export async function registerTaskRoutes(app: FastifyInstance): Promise<void> {
     const existing = await findTaskByIdOrKey(actor.workspace.id, idOrKey, accessibleTeamIds);
     if (!existing) return reply.code(404).send({ message: 'Task not found' });
 
-    const upload = await readMultipartMediaUpload(request);
-    const attachment = await createTaskAttachment(actor, existing.id, upload, commentId);
+    const media = normalizeUploadedMediaInput(uploadedMediaInputSchema.parse(request.body));
+    const attachment = await createTaskAttachment(actor, existing.id, media, commentId);
     return reply.code(201).send(attachment);
   });
 

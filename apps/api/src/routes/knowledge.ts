@@ -36,8 +36,7 @@ import {
   updateKnowledgeSpace,
   verifyKnowledgePage
 } from '../services/knowledge';
-import { uploadMediaToCdn } from '../services/media';
-import { readMultipartMediaUpload } from '../services/upload-request';
+import { normalizeUploadedMediaInput, uploadedMediaInputSchema } from '../services/media';
 
 const pageParamsSchema = z.object({ id: z.string().min(1) });
 const spaceParamsSchema = z.object({ idOrKey: z.string().min(1) });
@@ -156,8 +155,7 @@ export async function registerKnowledgeRoutes(app: FastifyInstance): Promise<voi
   app.post('/knowledge/pages/:id/attachments', async (request, reply) => {
     const actor = await getRequestActor(request);
     const { id } = pageParamsSchema.parse(request.params);
-    const upload = await readMultipartMediaUpload(request);
-    const media = await uploadMediaToCdn(upload);
+    const media = normalizeUploadedMediaInput(uploadedMediaInputSchema.parse(request.body));
     const attachment = await createKnowledgePageAttachment(actor, id, media);
     return reply.code(201).send(attachment);
   });

@@ -680,7 +680,7 @@ function aggregateUsageStats(accounts: IntegrationAccount[]): AiWorkspaceSetting
 
 async function recordUsageStats(credentialId: string, snapshot: AiUsageSnapshot): Promise<void> {
   await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT 1 FROM "IntegrationAccount" WHERE "id" = ${credentialId} FOR UPDATE`;
+    await tx.$executeRaw`SELECT 1 FROM "IntegrationAccount" WHERE "id" = ${credentialId}::uuid FOR UPDATE`;
     const account = await tx.integrationAccount.findUnique({ where: { id: credentialId } });
     if (!account) return;
     const raw = configObject(account.config);

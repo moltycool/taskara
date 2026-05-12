@@ -60,7 +60,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
 
     const membership = await firstUserWorkspaceMembership(user.id);
     const session = await createUserSession(user.id);
-    return reply.code(201).send(authResponse({ user, membership }, session));
+    return reply.code(201).send(await authResponse({ user, membership }, session));
   });
 
   app.post('/auth/login', async (request, reply) => {
@@ -78,7 +78,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     if (input.workspaceSlug && !membership) throw new HttpError(403, 'User is not a member of this workspace');
 
     const session = await createUserSession(user.id);
-    return reply.send(authResponse({ user, membership }, session));
+    return reply.send(await authResponse({ user, membership }, session));
   });
 
   app.post('/auth/logout', async (request, reply) => {
@@ -111,7 +111,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       });
       if (membership) {
         const session = await createUserSession(user.id);
-        return reply.send(authResponse({ user, membership }, session));
+        return reply.send(await authResponse({ user, membership }, session));
       }
       throw new HttpError(409, 'Workspace slug is already taken');
     }
@@ -136,7 +136,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     });
 
     const session = await createUserSession(user.id);
-    return reply.code(201).send(authResponse({ user, membership }, session));
+    return reply.code(201).send(await authResponse({ user, membership }, session));
   });
 
   app.post('/auth/onboarding', async (request, reply) => {
@@ -165,7 +165,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     });
 
     const session = await createUserSession(user.id);
-    return reply.code(201).send(authResponse({ user, membership }, session));
+    return reply.code(201).send(await authResponse({ user, membership }, session));
   });
 
   app.get('/auth/invites/:token', async (request) => {
@@ -241,7 +241,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     });
 
     const session = await createUserSession(result.user.id);
-    return reply.send(authResponse(result, session));
+    return reply.send(await authResponse(result, session));
   });
 }
 
@@ -323,7 +323,7 @@ function pickPublicUser(user: User) {
   };
 }
 
-function authResponse(
+async function authResponse(
   result: {
     user: User;
     membership: {

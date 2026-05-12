@@ -16,6 +16,7 @@ import { SettingsView } from '@/components/taskara/settings-view';
 import { TasksView } from '@/components/taskara/tasks-view';
 import { TaskReportsView } from '@/components/taskara/task-reports-view';
 import { TeamsView } from '@/components/taskara/teams-view';
+import { isAiEnabledForUserId } from '@/lib/ai-access';
 import { fa } from '@/lib/fa-copy';
 import { WorkspaceTaskSyncProvider } from '@/lib/task-sync-provider';
 import { useAuthSession } from '@/store/auth-store';
@@ -128,6 +129,15 @@ function WorkspacePage({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+function AiReportsRoute() {
+  const { session } = useAuthSession();
+  const { orgId = 'taskara' } = useParams();
+  if (!isAiEnabledForUserId(session?.user.id)) {
+    return <Navigate replace to={`/${orgId}/team/all/all`} />;
+  }
+  return <TaskReportsView />;
+}
+
 export function App() {
   return (
     <Routes>
@@ -151,7 +161,7 @@ export function App() {
         <Route path="members" element={<WorkspacePage><MembersView /></WorkspacePage>} />
         <Route path="projects" element={<WorkspacePage><ProjectsView /></WorkspacePage>} />
         <Route path="settings/*" element={<WorkspacePage><SettingsView /></WorkspacePage>} />
-        <Route path="reports" element={<WorkspacePage><TaskReportsView /></WorkspacePage>} />
+        <Route path="reports" element={<WorkspacePage><AiReportsRoute /></WorkspacePage>} />
         <Route path="tasks" element={<WorkspacePage><TasksView defaultSystemView="all" personalOnly={false} /></WorkspacePage>} />
         <Route path="team/:teamId/all" element={<WorkspacePage><TasksView /></WorkspacePage>} />
         <Route path="team/:teamId/projects" element={<WorkspacePage><ProjectsView /></WorkspacePage>} />

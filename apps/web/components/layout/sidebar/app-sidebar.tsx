@@ -39,7 +39,8 @@ import { TaskaraLogo } from '@/components/taskara/brand-logo';
 import { useLiveRefresh } from '@/lib/live-refresh';
 import { taskaraRequest } from '@/lib/taskara-client';
 import { fa } from '@/lib/fa-copy';
-import { clearAuthSession } from '@/store/auth-store';
+import { isAiEnabledForUserId } from '@/lib/ai-access';
+import { clearAuthSession, getAuthSession, setAuthSession } from '@/store/auth-store';
 import type { NotificationsResponse, PaginatedResponse, TaskaraMe, TaskaraTask, TaskaraTeam } from '@/lib/taskara-types';
 import type { AnnouncementsResponse, TaskaraMeeting, TaskaraWorkspaceMembership } from '@/lib/taskara-types';
 import { cn } from '@/lib/utils';
@@ -218,7 +219,20 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
       if (isCancelled()) return;
 
-      setMe(meResult.status === 'fulfilled' ? meResult.value : null);
+      if (meResult.status === 'fulfilled') {
+         setMe(meResult.value);
+         const session = getAuthSession();
+         if (session) {
+            setAuthSession({
+               ...session,
+               user: meResult.value.user,
+               workspace: meResult.value.workspace,
+               role: meResult.value.role,
+            });
+         }
+      } else {
+         setMe(null);
+      }
       setTeams(teamsResult.status === 'fulfilled' ? teamsResult.value : []);
       setWorkspaces(workspacesResult.status === 'fulfilled' ? workspacesResult.value.items : []);
       const notificationData =
@@ -298,10 +312,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
          { id: 'wiki', title: fa.nav.wiki, href: `/${orgId}/wiki`, icon: BookOpen },
          { id: 'all-tasks', title: fa.nav.allTasks, href: `/${orgId}/tasks`, icon: SidebarIssueIcon, count: allIssueCount },
          { id: 'my-issues', title: fa.nav.myIssues, href: `/${orgId}/team/all/all`, icon: SidebarMyIssuesIcon, count: myIssueCount },
-         { id: 'reports', title: fa.nav.reports, href: `/${orgId}/reports`, icon: BarChart3 },
+         ...(isAiEnabledForUserId(me?.user.id)
+            ? [{ id: 'reports', title: fa.nav.reports, href: `/${orgId}/reports`, icon: BarChart3 } satisfies PrimarySidebarItem]
+            : []),
          { id: 'heartbeat', title: fa.nav.heartbeat, href: `/${orgId}/heartbeat`, icon: Activity },
       ],
-      [allIssueCount, announcementUnreadCount, meetingCount, myIssueCount, orgId, unreadCount]
+      [allIssueCount, announcementUnreadCount, meetingCount, me?.user.id, myIssueCount, orgId, unreadCount]
    );
    const orderedPrimaryItems = React.useMemo(
       () => orderPrimarySidebarItems(primaryItems, primaryItemOrder),

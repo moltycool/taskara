@@ -89,6 +89,7 @@ import {
    makeEndOfIranWorkWeek,
 } from '@/components/taskara/task-due-date-control';
 import { fa } from '@/lib/fa-copy';
+import { isAiEnabledForUserId } from '@/lib/ai-access';
 import { taskaraRequest, uploadMedia, uploadTaskAttachment } from '@/lib/taskara-client';
 import {
    editorValueToPlainText,
@@ -791,6 +792,7 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
    const isMyIssuesView = personalOnly && currentTeamKey === currentTeamFallback;
    const viewScopeKey = isMyIssuesView ? 'mine' : currentTeamKey;
    const currentUserId = session?.user.id || null;
+   const aiEnabled = isAiEnabledForUserId(session?.user.id);
    const taskSync = useWorkspaceTaskSync();
    const {
       tasks,
@@ -2434,25 +2436,27 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
                            }
                            placeholder={fa.issue.titlePlaceholder}
                         />
-                        {/* <Tooltip>
-                           <TooltipTrigger asChild>
-                              <button
-                                 className="inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-white/12 bg-transparent text-zinc-400 transition hover:bg-white/8 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
-                                 disabled={composerSubmitting || composerAiLoading}
-                                 type="button"
-                                 onClick={() => void suggestComposerTextWithAi()}
-                              >
-                                 {composerAiLoading ? (
-                                    <Loader2 className="size-3.5 animate-spin" />
-                                 ) : (
-                                    <Sparkles className="size-3.5" />
-                                 )}
-                              </button>
-                           </TooltipTrigger>
-                           <TooltipContent className="border-white/10 bg-[#202023] text-zinc-200" side="bottom">
-                              بهبود و خلاصه‌سازی متن با AI
-                           </TooltipContent>
-                        </Tooltip> */}
+                        {aiEnabled ? (
+                           <Tooltip>
+                              <TooltipTrigger asChild>
+                                 <button
+                                    className="inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-white/12 bg-transparent text-zinc-400 transition hover:bg-white/8 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                    disabled={composerSubmitting || composerAiLoading}
+                                    type="button"
+                                    onClick={() => void suggestComposerTextWithAi()}
+                                 >
+                                    {composerAiLoading ? (
+                                       <Loader2 className="size-3.5 animate-spin" />
+                                    ) : (
+                                       <Sparkles className="size-3.5" />
+                                    )}
+                                 </button>
+                              </TooltipTrigger>
+                              <TooltipContent className="border-white/10 bg-[#202023] text-zinc-200" side="bottom">
+                                 بهبود و خلاصه‌سازی متن با AI
+                              </TooltipContent>
+                           </Tooltip>
+                        ) : null}
                      </div>
                      <DescriptionEditor
                         className="mt-2"
@@ -2478,7 +2482,7 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
                         files={composerFiles}
                         onRemove={removeComposerFile}
                      />
-                     {composerAiSuggestion ? (
+                     {aiEnabled && composerAiSuggestion ? (
                         <div className="mt-3 rounded-xl border border-indigo-400/25 bg-indigo-500/10 p-3 text-sm">
                            <div className="mb-2 flex items-center justify-between gap-2">
                               <div className="flex items-center gap-1.5 text-indigo-100">

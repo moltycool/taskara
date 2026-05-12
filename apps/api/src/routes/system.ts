@@ -107,7 +107,6 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
     const notifications = await prisma.notification.count({
       where: taskInboxNotificationWhere(actor.workspace.id, actor.user.id, { unreadOnly: true })
     });
-
     return { workspace: actor.workspace, user, role, unreadNotifications: notifications };
   });
 

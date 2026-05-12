@@ -67,6 +67,7 @@ services:
       - TASKARA_CDN_UPLOAD_URL=${TASKARA_CDN_UPLOAD_URL:-}
       - TASKARA_CDN_MEDIA_BASE_URL=${TASKARA_CDN_MEDIA_BASE_URL:-}
       - TASKARA_CDN_APP=${TASKARA_CDN_APP:-taskara}
+      - TASKARA_AI_TEST_USER_IDS=${TASKARA_AI_TEST_USER_IDS:-}
     expose:
       - "80"
     healthcheck:

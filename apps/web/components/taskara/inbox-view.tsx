@@ -7,7 +7,6 @@ import {
    Bell,
    CalendarDays,
    Check,
-   CheckCircle2,
    Circle,
    ExternalLink,
    Inbox,
@@ -351,12 +350,14 @@ function NotificationListItem({
    const Icon = notificationIcon(notification);
    const body = getNotificationBody(notification) || fa.inbox.noDescription;
    const isRead = Boolean(notification.readAt);
+   const isStatusChange = notification.type === 'task_status_changed';
+   const taskStatus = notification.task?.status || 'TODO';
 
    return (
       <button
          className={cn(
-            'group grid w-full grid-cols-[28px_minmax(0,1fr)_36px] gap-3 rounded-md px-3 py-2.5 text-start transition-colors',
-            selected ? 'bg-white/[0.075]' : 'hover:bg-white/[0.045]'
+            'group grid w-full grid-cols-[24px_minmax(0,1fr)_34px] gap-2.5 rounded-lg px-2.5 py-2 text-start transition-colors',
+            selected ? 'bg-white/[0.075]' : 'hover:bg-white/[0.04]'
          )}
          dir="rtl"
          onClick={onSelect}
@@ -364,35 +365,52 @@ function NotificationListItem({
       >
          <span
             className={cn(
-               'mt-0.5 inline-flex size-7 items-center justify-center rounded-full transition-colors',
-               isRead ? 'bg-white/[0.035] text-zinc-600' : 'bg-white/[0.055] text-zinc-400'
+               'mt-0.5 inline-flex size-6 items-center justify-center rounded-full transition-colors',
+               isStatusChange
+                  ? 'bg-transparent'
+                  : isRead
+                    ? 'bg-white/[0.03] text-zinc-600'
+                    : 'bg-white/[0.05] text-zinc-400'
             )}
          >
-            <Icon className="size-4" />
+            {isStatusChange ? <StatusIcon status={taskStatus} className="size-4" /> : <Icon className="size-3.5" />}
          </span>
          <span className="min-w-0">
-            <span className="mb-1 flex min-w-0 items-center gap-1.5">
+            <span className="mb-0.5 flex min-w-0 items-center gap-1.5">
                {!isRead ? <span className="size-1.5 shrink-0 rounded-full bg-[#5e6ad2]" /> : null}
                <span
                   className={cn(
-                     'block min-w-0 flex-1 truncate text-start text-sm font-medium',
-                     isRead ? 'text-zinc-500' : 'text-zinc-200'
+                     'block min-w-0 flex-1 truncate text-start text-[13px] leading-5',
+                     isRead ? 'text-zinc-500' : 'text-zinc-100'
                   )}
                   dir="auto"
                >
                   {notificationTitle(notification)}
                </span>
             </span>
-            <span
-               className={cn('line-clamp-1 text-start text-xs leading-5', isRead ? 'text-zinc-600' : 'text-zinc-500')}
-               dir="auto"
-            >
-               {body}
-            </span>
+            {isStatusChange ? (
+               <span
+                  className={cn(
+                     'inline-flex min-w-0 items-center gap-1.5 text-start text-[10px] leading-3.5 text-zinc-500 opacity-70',
+                     isRead && 'opacity-45'
+                  )}
+               >
+                  <span className="truncate">وضعیت تغییر کرد</span>
+                  <StatusIcon status={taskStatus} className="size-3 shrink-0" />
+                  <span className="truncate">{getStatusLabel(taskStatus)}</span>
+               </span>
+            ) : (
+               <span
+                  className={cn('line-clamp-1 text-start text-[10px] leading-3.5 text-zinc-500 opacity-70', isRead && 'opacity-45')}
+                  dir="auto"
+               >
+                  {body}
+               </span>
+            )}
          </span>
          <span
             className={cn(
-               'ltr shrink-0 whitespace-nowrap pt-0.5 text-start text-[11px] font-medium tabular-nums',
+               'ltr shrink-0 whitespace-nowrap pt-0.5 text-start text-[11px] tabular-nums',
                isRead ? 'text-zinc-600' : 'text-zinc-500'
             )}
             title={formatJalaliDateTime(notification.createdAt)}
@@ -836,7 +854,6 @@ function notificationIcon(notification: TaskaraNotification) {
    if (notification.type === 'task_mentioned' || notification.type === 'task_comment_mentioned') return AtSign;
    if (notification.type === 'task_commented') return MessageSquare;
    if (notification.type === 'task_description_changed') return PencilLine;
-   if (notification.type === 'task_status_changed') return CheckCircle2;
    if (notification.type === 'task_created') return Circle;
    return Bell;
 }

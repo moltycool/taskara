@@ -24,9 +24,12 @@ import {
 } from '@lexical/react/LexicalTypeaheadMenuPlugin';
 import { useLexicalEditable } from '@lexical/react/useLexicalEditable';
 import { useLexicalNodeSelection } from '@lexical/react/useLexicalNodeSelection';
+import { $createCodeNode, $isCodeNode, CodeNode } from '@lexical/code-core';
 import { $isLinkNode, AutoLinkNode, LinkNode, TOGGLE_LINK_COMMAND } from '@lexical/link';
 import {
    $insertList,
+   $isListItemNode,
+   $isListNode,
    INSERT_CHECK_LIST_COMMAND,
    INSERT_ORDERED_LIST_COMMAND,
    INSERT_UNORDERED_LIST_COMMAND,
@@ -37,6 +40,8 @@ import {
    BOLD_STAR,
    BOLD_UNDERSCORE,
    CHECK_LIST,
+   CODE,
+   $convertFromMarkdownString,
    HEADING,
    INLINE_CODE,
    ITALIC_STAR,
@@ -278,6 +283,7 @@ const autoDirectionSyncTag = 'taskara-description-editor:auto-direction-sync';
 const descriptionMarkdownTransformers = [
    HEADING,
    QUOTE,
+   CODE,
    UNORDERED_LIST,
    ORDERED_LIST,
    CHECK_LIST,
@@ -301,38 +307,40 @@ const emailAutoLinkMatcher = createLinkMatcherWithRegExp(
 const autoLinkMatchers = [urlAutoLinkMatcher, emailAutoLinkMatcher];
 
 const editorTheme: EditorThemeClasses = {
+   code:
+      'my-4 block overflow-x-auto rounded-lg border border-white/10 bg-[#101011] px-4 py-3 text-left font-mono text-[0.9em] leading-6 text-zinc-200 [direction:ltr] [tab-size:3] first:mt-0 last:mb-0',
    heading: {
-      h1: 'mb-2 mt-4 text-xl leading-8 !font-semibold text-zinc-100 first:mt-0',
-      h2: 'mb-2 mt-4 text-lg leading-7 !font-semibold text-zinc-100 first:mt-0',
-      h3: 'mb-2 mt-3 text-base leading-6 !font-semibold text-zinc-100 first:mt-0',
+      h1: 'taskara-editor-heading mb-3 mt-7 text-2xl leading-9 text-zinc-100 first:mt-0',
+      h2: 'taskara-editor-heading mb-2.5 mt-6 text-xl leading-8 text-zinc-100 first:mt-0',
+      h3: 'taskara-editor-heading mb-2 mt-5 text-lg leading-7 text-zinc-100 first:mt-0',
    },
    image: 'mx-1 inline-flex max-w-full align-middle',
    indent: 'lexical-indent',
    link: 'text-indigo-300 underline decoration-indigo-300/35 underline-offset-2 transition hover:text-indigo-200 hover:decoration-indigo-200/70',
    list: {
-      checklist: 'm-0 p-0',
-      listitem: 'mx-4 my-0 marker:text-zinc-500',
+      checklist: 'my-3 p-0 first:mt-0 last:mb-0',
+      listitem: 'mx-5 my-1.5 ps-1 leading-7 marker:text-zinc-500',
       listitemChecked:
-         "relative mx-1 my-0 block min-h-6 list-none py-0 pl-1 pr-6 text-zinc-500 line-through before:absolute before:right-0 before:top-1/2 before:block before:size-4 before:-translate-y-1/2 before:rounded before:border before:border-indigo-500/70 before:bg-indigo-600 before:content-[''] after:absolute after:right-[0.28rem] after:top-1/2 after:block after:h-1.5 after:w-2 after:-translate-y-1/2 after:-rotate-45 after:border-b-2 after:border-l-2 after:border-white after:content-[''] dark:before:border-indigo-400/60 dark:before:bg-indigo-500/45",
+         "relative mx-1 my-1.5 block min-h-7 list-none py-0 pl-1 pr-7 leading-7 text-zinc-500 line-through before:absolute before:right-0 before:top-[0.85rem] before:block before:size-4 before:-translate-y-1/2 before:rounded before:border before:border-indigo-500/70 before:bg-indigo-600 before:content-[''] after:absolute after:right-[0.28rem] after:top-[0.85rem] after:block after:h-1.5 after:w-2 after:-translate-y-1/2 after:-rotate-45 after:border-b-2 after:border-l-2 after:border-white after:content-[''] dark:before:border-indigo-400/60 dark:before:bg-indigo-500/45",
       listitemUnchecked:
-         "relative mx-1 my-0 block min-h-6 list-none py-0 pl-1 pr-6 before:absolute before:right-0 before:top-1/2 before:block before:size-4 before:-translate-y-1/2 before:rounded before:border before:border-zinc-300 before:bg-white before:content-[''] dark:before:border-white/20 dark:before:bg-white/5",
+         "relative mx-1 my-1.5 block min-h-7 list-none py-0 pl-1 pr-7 leading-7 before:absolute before:right-0 before:top-[0.85rem] before:block before:size-4 before:-translate-y-1/2 before:rounded before:border before:border-zinc-300 before:bg-white before:content-[''] dark:before:border-white/20 dark:before:bg-white/5",
       nested: {
          listitem: 'list-none before:hidden after:hidden',
       },
-      ol: 'm-0 list-decimal p-0 [list-style-position:outside] marker:text-zinc-500',
+      ol: 'my-3 list-decimal p-0 [list-style-position:outside] marker:text-zinc-500 first:mt-0 last:mb-0',
       olDepth: [
-         'm-0 list-decimal p-0 [list-style-position:outside]',
-         'm-0 p-0 [list-style-position:outside] [list-style-type:upper-alpha]',
-         'm-0 p-0 [list-style-position:outside] [list-style-type:lower-alpha]',
-         'm-0 p-0 [list-style-position:outside] [list-style-type:upper-roman]',
-         'm-0 p-0 [list-style-position:outside] [list-style-type:lower-roman]',
+         'my-3 list-decimal p-0 [list-style-position:outside] first:mt-0 last:mb-0',
+         'my-3 p-0 [list-style-position:outside] [list-style-type:upper-alpha] first:mt-0 last:mb-0',
+         'my-3 p-0 [list-style-position:outside] [list-style-type:lower-alpha] first:mt-0 last:mb-0',
+         'my-3 p-0 [list-style-position:outside] [list-style-type:upper-roman] first:mt-0 last:mb-0',
+         'my-3 p-0 [list-style-position:outside] [list-style-type:lower-roman] first:mt-0 last:mb-0',
       ],
-      ul: 'm-0 list-disc p-0 [list-style-position:outside] marker:text-zinc-500',
+      ul: 'my-3 list-disc p-0 [list-style-position:outside] marker:text-zinc-500 first:mt-0 last:mb-0',
    },
    ltr: 'text-left',
-   paragraph: 'my-2 whitespace-pre-wrap first:mt-0 last:mb-0',
-   quote: 'my-3 border-s-2 border-white/14 ps-3 text-zinc-400 first:mt-0 last:mb-0',
-   root: 'text-right [--lexical-indent-base-value:40px]',
+   paragraph: 'my-3 whitespace-pre-wrap leading-7 first:mt-0 last:mb-0',
+   quote: 'my-4 border-s-2 border-white/14 ps-4 leading-7 text-zinc-400 first:mt-0 last:mb-0',
+   root: 'taskara-prose-editor text-right [--lexical-indent-base-value:2.25rem]',
    rtl: 'text-right',
    tab: 'relative no-underline',
    table:
@@ -347,7 +355,7 @@ const editorTheme: EditorThemeClasses = {
    tableSelected: 'ring-1 ring-indigo-400/50',
    tableSelection: 'bg-indigo-500/20',
    text: {
-      bold: '!font-semibold text-zinc-100',
+      bold: 'taskara-editor-text-bold text-zinc-100',
       code: 'rounded bg-white/8 px-1 py-0.5 font-mono text-[0.92em] text-zinc-100',
       italic: 'italic text-zinc-200',
       strikethrough: 'text-zinc-400 line-through decoration-zinc-500',
@@ -1361,6 +1369,54 @@ function $formatCurrentSelection(format: TextFormatType) {
    if ($isRangeSelection(selection)) selection.formatText(format);
 }
 
+function $setSelectionToCodeBlock() {
+   const selection = $getSelection();
+   if (!$isRangeSelection(selection)) return;
+
+   const selectedListItems = $getSelectedListItems(selection);
+   if (selectedListItems.length > 0) {
+      const codeNode = $createCodeNode('markdown');
+      codeNode.append($createTextNode(selectedListItems.map((item) => item.getTextContent()).join('\n')));
+
+      const listRoots = Array.from(
+         new Set(
+            selectedListItems
+               .map((item) => $findMatchingParent(item, (node) => $isListNode(node)))
+               .filter((node): node is ListNode => Boolean(node))
+         )
+      );
+
+      const firstListRoot = listRoots[0];
+      if (firstListRoot) {
+         firstListRoot.replace(codeNode);
+         listRoots.slice(1).forEach((listRoot) => listRoot.remove());
+         codeNode.selectStart();
+         return;
+      }
+   }
+
+   $setBlocksType(selection, () => $createCodeNode('markdown'));
+}
+
+function $getSelectedListItems(selection: RangeSelection): ListItemNode[] {
+   const items = new Map<string, ListItemNode>();
+
+   for (const node of selection.getNodes()) {
+      const item = $isListItemNode(node)
+         ? node
+         : $findMatchingParent(node, (parentNode) => $isListItemNode(parentNode));
+      if ($isListItemNode(item) && item.getTextContent().trim()) {
+         items.set(item.getKey(), item);
+      }
+   }
+
+   return Array.from(items.values()).sort((left, right) => {
+      if (left.isBefore(right)) return -1;
+      if (right.isBefore(left)) return 1;
+      return 0;
+   });
+}
+
 function createSlashCommandOptions({
    editor,
    onFileUploadError,
@@ -1420,6 +1476,15 @@ function createSlashCommandOptions({
          key: 'code',
          keywords: ['code', 'format', 'کد'],
          title: 'کد',
+      }),
+      new SlashCommandOption({
+         command: (activeEditor) => activeEditor.update($setSelectionToCodeBlock),
+         description: 'بلوک کد چندخطی با فونت ثابت',
+         icon: <Code2 className="size-4" />,
+         key: 'code-block',
+         keywords: ['code block', 'fence', 'pre', 'markdown', 'کد'],
+         shortcut: '```',
+         title: 'بلوک کد',
       }),
       new SlashCommandOption({
          command: (activeEditor) => activeEditor.update(() => $setBlocksType($getSelection(), () => $createParagraphNode())),
@@ -1783,6 +1848,63 @@ function MarkdownTablePastePlugin(): null {
    return null;
 }
 
+function MarkdownPastePlugin(): null {
+   const [editor] = useLexicalComposerContext();
+
+   useEffect(() => {
+      return editor.registerCommand(
+         PASTE_COMMAND,
+         (event) => {
+            if (!('clipboardData' in event) || !event.clipboardData) return false;
+            const text = event.clipboardData.getData('text/plain');
+            if (!shouldImportMarkdownPaste(text)) return false;
+
+            let canReplaceDocument = false;
+            editor.getEditorState().read(() => {
+               canReplaceDocument = isEditorEmptyForMarkdownImport();
+            });
+            if (!canReplaceDocument) return false;
+
+            event.preventDefault();
+            editor.update(() => {
+               $convertFromMarkdownString(text, descriptionMarkdownTransformers, undefined, true);
+            });
+            return true;
+         },
+         COMMAND_PRIORITY_EDITOR
+      );
+   }, [editor]);
+
+   return null;
+}
+
+function isEditorEmptyForMarkdownImport() {
+   return $isNodeEmpty($getRoot());
+}
+
+function shouldImportMarkdownPaste(input: string) {
+   const text = input.trim();
+   if (text.length < 3) return false;
+   if (parseMarkdownTable(text)) return false;
+
+   const lines = text.split(/\r?\n/);
+   if (lines.length < 2 && !/^\s{0,3}(#{1,6}|>|[-*+]\s|\d+\.\s|\[(?: |x)\]\s|```)/m.test(text)) return false;
+
+   const markdownSignals = [
+      /^\s{0,3}#{1,6}\s+\S/m,
+      /^\s{0,3}>\s+\S/m,
+      /^\s{0,3}(?:[-*+])\s+\S/m,
+      /^\s{0,3}\d+\.\s+\S/m,
+      /^\s{0,3}(?:[-*+]\s*)?\[(?: |x)\]\s+\S/im,
+      /^\s{0,3}```[\w-]*\s*$/m,
+      /\[[^\]\n]+]\((?:https?:\/\/|mailto:|\/|#)[^)]+\)/,
+      /(^|[^*])\*\*[^*\n][\s\S]*?[^*\n]\*\*/,
+      /(^|[^~])~~[^~\n][\s\S]*?[^~\n]~~/,
+   ];
+
+   return markdownSignals.some((pattern) => pattern.test(text));
+}
+
 function parseMarkdownTable(input: string): { hasHeader: boolean; rows: string[][] } | null {
    const lines = input
       .trim()
@@ -2091,6 +2213,10 @@ function DescriptionContextMenu({
       });
    }, [editor]);
 
+   const setCodeBlock = useCallback(() => {
+      editor.update($setSelectionToCodeBlock);
+   }, [editor]);
+
    const insertTable = useCallback(() => {
       editor.focus(() =>
          editor.dispatchCommand(INSERT_TABLE_COMMAND, { columns: '3', includeHeaders: true, rows: '3' })
@@ -2106,7 +2232,8 @@ function DescriptionContextMenu({
 
    return (
       <ContextMenuContent
-         className="w-fit max-w-[calc(100vw-1.5rem)] border-white/10 bg-[#202023] p-1.5 text-zinc-300 shadow-2xl sm:max-w-[22rem]"
+         className="max-h-[500px] w-fit max-w-[calc(100vw-1.5rem)] overflow-y-auto border-white/10 bg-[#202023] p-1.5 text-zinc-300 shadow-2xl sm:max-w-[22rem]"
+         collisionPadding={20}
          dir="rtl"
       >
          <ContextMenuLabel className="px-2 py-1 text-xs font-normal text-zinc-500">متن</ContextMenuLabel>
@@ -2124,12 +2251,6 @@ function DescriptionContextMenu({
          </EditorContextMenuItem>
          <EditorContextMenuItem icon={<Code2 className="size-4" />} onSelect={() => formatText('code')}>
             کد
-         </EditorContextMenuItem>
-         <EditorContextMenuItem icon={<Subscript className="size-4" />} onSelect={() => formatText('subscript')}>
-            زیرنویس
-         </EditorContextMenuItem>
-         <EditorContextMenuItem icon={<Superscript className="size-4" />} onSelect={() => formatText('superscript')}>
-            بالانویس
          </EditorContextMenuItem>
          <EditorContextMenuItem icon={<Link2 className="size-4" />} shortcut="⌘K" onSelect={() => insertLinkWithPrompt(editor)}>
             لینک
@@ -2162,17 +2283,8 @@ function DescriptionContextMenu({
          <EditorContextMenuItem icon={<Quote className="size-4" />} onSelect={setQuote}>
             نقل‌قول
          </EditorContextMenuItem>
-         <EditorContextMenuItem icon={<AlignRight className="size-4" />} onSelect={() => editor.dispatchCommand(FORMAT_ELEMENT_COMMAND, 'right')}>
-            راست‌چین
-         </EditorContextMenuItem>
-         <EditorContextMenuItem icon={<AlignCenter className="size-4" />} onSelect={() => editor.dispatchCommand(FORMAT_ELEMENT_COMMAND, 'center')}>
-            وسط‌چین
-         </EditorContextMenuItem>
-         <EditorContextMenuItem icon={<AlignLeft className="size-4" />} onSelect={() => editor.dispatchCommand(FORMAT_ELEMENT_COMMAND, 'left')}>
-            چپ‌چین
-         </EditorContextMenuItem>
-         <EditorContextMenuItem icon={<AlignJustify className="size-4" />} onSelect={() => editor.dispatchCommand(FORMAT_ELEMENT_COMMAND, 'justify')}>
-            تمام‌چین
+         <EditorContextMenuItem icon={<Code2 className="size-4" />} onSelect={setCodeBlock}>
+            بلوک کد
          </EditorContextMenuItem>
 
          <ContextMenuSeparator className="bg-white/8" />
@@ -2218,71 +2330,39 @@ function DescriptionContextMenu({
             </EditorContextMenuItem>
          ) : null}
 
-         <ContextMenuSeparator className="bg-white/8" />
-         <ContextMenuLabel className="px-2 py-1 text-xs font-normal text-zinc-500">جدول</ContextMenuLabel>
-         <EditorContextMenuItem
-            disabled={!isInTable}
-            icon={<ArrowUp className="size-4" />}
-            onSelect={() => runTableCommand(() => $insertTableRowAtSelection(false))}
-         >
-            ردیف بالا
-         </EditorContextMenuItem>
-         <EditorContextMenuItem
-            disabled={!isInTable}
-            icon={<ArrowDown className="size-4" />}
-            onSelect={() => runTableCommand(() => $insertTableRowAtSelection(true))}
-         >
-            ردیف پایین
-         </EditorContextMenuItem>
-         <EditorContextMenuItem
-            disabled={!isInTable}
-            icon={<ArrowRight className="size-4" />}
-            onSelect={() => runTableCommand(() => $insertTableColumnAtSelection(false))}
-         >
-            ستون راست
-         </EditorContextMenuItem>
-         <EditorContextMenuItem
-            disabled={!isInTable}
-            icon={<ArrowLeft className="size-4" />}
-            onSelect={() => runTableCommand(() => $insertTableColumnAtSelection(true))}
-         >
-            ستون چپ
-         </EditorContextMenuItem>
-         <EditorContextMenuItem
-            disabled={!isInTable}
-            icon={<Rows3 className="size-4" />}
-            onSelect={() => runTableCommand($toggleCurrentTableRowHeader)}
-         >
-            تغییر هدر ردیف
-         </EditorContextMenuItem>
-         <EditorContextMenuItem
-            disabled={!isInTable}
-            icon={<Columns3 className="size-4" />}
-            onSelect={() => runTableCommand($toggleCurrentTableColumnHeader)}
-         >
-            تغییر هدر ستون
-         </EditorContextMenuItem>
-         <EditorContextMenuItem
-            disabled={!isInTable}
-            icon={<Trash2 className="size-4" />}
-            onSelect={() => runTableCommand($deleteTableRowAtSelection)}
-         >
-            حذف ردیف
-         </EditorContextMenuItem>
-         <EditorContextMenuItem
-            disabled={!isInTable}
-            icon={<Trash2 className="size-4" />}
-            onSelect={() => runTableCommand($deleteTableColumnAtSelection)}
-         >
-            حذف ستون
-         </EditorContextMenuItem>
-         <EditorContextMenuItem
-            disabled={!isInTable}
-            icon={<Trash2 className="size-4" />}
-            onSelect={() => runTableCommand($deleteCurrentTable)}
-         >
-            حذف جدول
-         </EditorContextMenuItem>
+         {isInTable ? (
+            <>
+               <ContextMenuSeparator className="bg-white/8" />
+               <ContextMenuLabel className="px-2 py-1 text-xs font-normal text-zinc-500">جدول</ContextMenuLabel>
+               <EditorContextMenuItem icon={<ArrowUp className="size-4" />} onSelect={() => runTableCommand(() => $insertTableRowAtSelection(false))}>
+                  ردیف بالا
+               </EditorContextMenuItem>
+               <EditorContextMenuItem icon={<ArrowDown className="size-4" />} onSelect={() => runTableCommand(() => $insertTableRowAtSelection(true))}>
+                  ردیف پایین
+               </EditorContextMenuItem>
+               <EditorContextMenuItem icon={<ArrowRight className="size-4" />} onSelect={() => runTableCommand(() => $insertTableColumnAtSelection(false))}>
+                  ستون راست
+               </EditorContextMenuItem>
+               <EditorContextMenuItem icon={<ArrowLeft className="size-4" />} onSelect={() => runTableCommand(() => $insertTableColumnAtSelection(true))}>
+                  ستون چپ
+               </EditorContextMenuItem>
+               <EditorContextMenuItem icon={<Rows3 className="size-4" />} onSelect={() => runTableCommand($toggleCurrentTableRowHeader)}>
+                  هدر ردیف
+               </EditorContextMenuItem>
+               <EditorContextMenuItem icon={<Columns3 className="size-4" />} onSelect={() => runTableCommand($toggleCurrentTableColumnHeader)}>
+                  هدر ستون
+               </EditorContextMenuItem>
+               <EditorContextMenuItem icon={<Trash2 className="size-4" />} onSelect={() => runTableCommand($deleteTableRowAtSelection)}>
+                  حذف ردیف
+               </EditorContextMenuItem>
+               <EditorContextMenuItem icon={<Trash2 className="size-4" />} onSelect={() => runTableCommand($deleteTableColumnAtSelection)}>
+                  حذف ستون
+               </EditorContextMenuItem>
+               <EditorContextMenuItem icon={<Trash2 className="size-4" />} onSelect={() => runTableCommand($deleteCurrentTable)}>
+                  حذف جدول
+               </EditorContextMenuItem>
+            </>
+         ) : null}
       </ContextMenuContent>
    );
 }
@@ -2631,6 +2711,9 @@ function $handlePlaygroundIndentAndOutdent(indentOrOutdent: (block: ElementNode)
 }
 
 function $indentOverTab(selection: RangeSelection): boolean {
+   const anchorTopLevel = selection.anchor.getNode().getTopLevelElement();
+   if ($isCodeNode(anchorTopLevel)) return false;
+
    const nodes = selection.getNodes();
    const canIndentBlockNodes = nodes.filter((node) => $isBlockElementNode(node) && node.canIndent());
    if (canIndentBlockNodes.length > 0) return true;
@@ -3107,6 +3190,7 @@ export function DescriptionEditor({
          nodes: [
             HeadingNode,
             QuoteNode,
+            CodeNode,
             ListNode,
             ListItemNode,
             LinkNode,
@@ -3155,8 +3239,8 @@ export function DescriptionEditor({
                                     ? 'min-h-24 w-full overflow-auto break-words bg-transparent py-3 pl-3 pr-11 text-right text-sm leading-6 text-zinc-300 outline-none'
                                     : 'min-h-16 w-full overflow-auto break-words bg-transparent py-1 pl-0 pr-11 text-right text-sm leading-6 text-zinc-300 outline-none',
                                  '[&_[dir=ltr]]:text-left [&_[dir=rtl]]:text-right',
-                                 contentClassName,
-                                 'pr-2'
+                                 'pr-2',
+                                 contentClassName
                               )}
                               dir="rtl"
                               spellCheck
@@ -3168,8 +3252,8 @@ export function DescriptionEditor({
                                  variant === 'framed'
                                     ? 'pointer-events-none absolute inset-x-0 top-3 pl-3 pr-11 text-right text-sm leading-6 text-zinc-600'
                                     : 'pointer-events-none absolute inset-x-0 top-1 pl-0 pr-11 text-right text-sm leading-6 text-zinc-600',
-                                 placeholderClassName,
-                                 'pr-2'
+                                 'pr-2',
+                                 placeholderClassName
                               )}
                               dir="rtl"
                            >
@@ -3188,6 +3272,7 @@ export function DescriptionEditor({
                   <MarkdownShortcutPlugin transformers={descriptionMarkdownTransformers} />
                   <HeadingEnterPlugin />
                   <TablePlugin hasCellMerge={false} hasHorizontalScroll hasTabHandler />
+                  <MarkdownPastePlugin />
                   <MarkdownTablePastePlugin />
                   <InlineAssetsPlugin
                      onFileUploadError={onInlineFileUploadError}

@@ -81,6 +81,7 @@ function WorkspaceShell() {
   const pathParts = location.pathname.split('/').filter(Boolean);
   const routeKey = pathParts[1] || 'team';
   const isSettingsRoute = routeKey === 'settings';
+  const isKnowledgeRoute = routeKey === 'wiki';
   const pageMeta =
     routeKey === 'team' && pathParts[3] === 'projects'
       ? pageMetaByRoute.projects
@@ -91,7 +92,7 @@ function WorkspaceShell() {
     );
 
   return (
-    <MainLayout header={header} headersNumber={1} showSidebar={!isSettingsRoute}>
+    <MainLayout header={header} headersNumber={1} showSidebar={!isSettingsRoute && !isKnowledgeRoute}>
       <Outlet />
     </MainLayout>
   );

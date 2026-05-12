@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { fa } from '@/lib/fa-copy';
 import { cn } from '@/lib/utils';
-import { Bell, Filter, SlidersHorizontal, Trophy } from 'lucide-react';
+import { Bell, ChevronRight, Filter, SlidersHorizontal } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 interface PageHeaderProps {
@@ -24,7 +24,7 @@ export function PageHeader({ title, description, count, action, compact = false 
    const [openMenu, setOpenMenu] = useState<'display' | 'filters' | null>(null);
    const pathParts = location.pathname.split('/').filter(Boolean);
    const orgId = pathParts[0] || 'taskara';
-   const isLeaderboardRoute = pathParts[1] === 'leaderboard';
+   const isKnowledgeRoute = pathParts[1] === 'wiki';
 
    useEffect(() => {
       const handleMenuState = (event: Event) => {
@@ -67,12 +67,29 @@ export function PageHeader({ title, description, count, action, compact = false 
       >
          <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-2">
-               <Tooltip>
-                  <TooltipTrigger asChild>
-                     <SidebarTrigger className="text-zinc-500 hover:text-zinc-100" />
-                  </TooltipTrigger>
-                  <TooltipContent>منوی کناری</TooltipContent>
-               </Tooltip>
+               {isKnowledgeRoute ? (
+                  <Tooltip>
+                     <TooltipTrigger asChild>
+                        <Button
+                           aria-label="بازگشت"
+                           size="icon"
+                           variant="ghost"
+                           className="size-8 rounded-full text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-100"
+                           onClick={() => navigate(`/${orgId}/team/all/all`)}
+                        >
+                           <ChevronRight className="size-4" />
+                        </Button>
+                     </TooltipTrigger>
+                     <TooltipContent>بازگشت</TooltipContent>
+                  </Tooltip>
+               ) : (
+                  <Tooltip>
+                     <TooltipTrigger asChild>
+                        <SidebarTrigger className="text-zinc-500 hover:text-zinc-100" />
+                     </TooltipTrigger>
+                     <TooltipContent>منوی کناری</TooltipContent>
+                  </Tooltip>
+               )}
                <div className="flex items-center gap-2">
                   <h1 className="text-sm font-semibold text-zinc-200 lg:text-base">{title}</h1>
                   {typeof count === 'number' ? (
@@ -117,23 +134,6 @@ export function PageHeader({ title, description, count, action, compact = false 
                      </Button>
                   </TooltipTrigger>
                   <TooltipContent>{fa.issue.display}</TooltipContent>
-               </Tooltip>
-               <Tooltip>
-                  <TooltipTrigger asChild>
-                     <Button
-                        aria-label={fa.nav.leaderboard}
-                        size="icon"
-                        variant="ghost"
-                        className={cn(
-                           'size-8 rounded-full text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-100',
-                           isLeaderboardRoute && 'bg-white/[0.08] text-zinc-100'
-                        )}
-                        onClick={() => navigate(`/${orgId}/leaderboard`)}
-                     >
-                        <Trophy className="size-4" />
-                     </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>{fa.nav.leaderboard}</TooltipContent>
                </Tooltip>
                <div className="ms-auto flex items-center gap-1.5">
                   <Tooltip>

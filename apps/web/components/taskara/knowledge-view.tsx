@@ -666,8 +666,8 @@ export function KnowledgeView() {
                         users={users}
                         variant="plain"
                         showToolbar={false}
-                        contentClassName="min-h-[420px] pr-0 text-[15px] leading-7 text-foreground"
-                        placeholderClassName="pr-0 text-[15px]"
+                        contentClassName="mx-auto min-h-[520px] w-full max-w-[82ch] pr-0 text-[16px] leading-8 text-foreground"
+                        placeholderClassName="mx-auto w-full max-w-[82ch] pr-0 text-[16px] leading-8"
                         uploadInlineImages={uploadInlineImages}
                         onInlineImageUploadError={(err) => toast.error(err instanceof Error ? err.message : fa.knowledge.attachmentUploadFailed)}
                         uploadInlineFiles={uploadInlineFiles}

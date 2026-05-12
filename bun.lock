@@ -48,8 +48,10 @@
       "name": "@taskara/web",
       "version": "0.1.0",
       "dependencies": {
+        "@lexical/code-core": "^0.44.0",
         "@lexical/link": "^0.44.0",
         "@lexical/list": "^0.44.0",
+        "@lexical/markdown": "^0.44.0",
         "@lexical/react": "^0.44.0",
         "@lexical/rich-text": "^0.44.0",
         "@lexical/table": "^0.44.0",

@@ -231,6 +231,24 @@ input[type='search'] {
    font-size: 16px !important;
 }
 
+.taskara-prose-editor {
+   font-kerning: normal;
+   overflow-wrap: anywhere;
+   text-wrap: pretty;
+}
+
+.taskara-prose-editor code,
+.taskara-prose-editor pre {
+   font-variant-ligatures: none;
+}
+
+.taskara-prose-editor .taskara-editor-heading,
+.taskara-prose-editor .taskara-editor-text-bold,
+.taskara-prose-editor strong,
+.taskara-prose-editor b {
+   font-weight: 600 !important;
+}
+
 /* Light-mode compatibility for legacy dark-only utility classes.
    Keep these scoped away from `.dark` so the established dark theme stays unchanged. */
 :root:not(.dark) [class~="bg-[#050506]"],

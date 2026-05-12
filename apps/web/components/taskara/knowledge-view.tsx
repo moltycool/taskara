@@ -569,7 +569,7 @@ export function KnowledgeView() {
    );
 
    return (
-      <div className="grid h-full min-h-0 grid-cols-1 overflow-hidden bg-container text-foreground lg:grid-cols-[320px_minmax(0,1fr)] xl:grid-cols-[340px_minmax(0,1fr)_320px]">
+      <div className="grid h-full min-h-0 grid-cols-1 overflow-hidden bg-container text-foreground lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)_280px]">
          <aside className="flex min-h-0 flex-col border-b border-border bg-sidebar text-sidebar-foreground lg:border-b-0 lg:border-e">
             <div className="shrink-0 border-b border-border p-3">
                {!loading && spaces.length > 0 ? (

@@ -105,6 +105,7 @@ import {
    FOCUS_COMMAND,
    FORMAT_TEXT_COMMAND,
    getDOMSelection,
+   getTextDirection,
    INDENT_CONTENT_COMMAND,
    INSERT_TAB_COMMAND,
    KEY_DOWN_COMMAND,
@@ -273,6 +274,7 @@ type SerializedInlineUploadPlaceholderNode = Spread<
 >;
 
 const externalSyncTag = 'taskara-description-editor:external-sync';
+const autoDirectionSyncTag = 'taskara-description-editor:auto-direction-sync';
 const descriptionMarkdownTransformers = [
    HEADING,
    QUOTE,
@@ -317,7 +319,7 @@ const editorTheme: EditorThemeClasses = {
       nested: {
          listitem: 'list-none before:hidden after:hidden',
       },
-      ol: 'm-0 list-decimal p-0 text-right [list-style-position:outside] marker:text-zinc-500',
+      ol: 'm-0 list-decimal p-0 [list-style-position:outside] marker:text-zinc-500',
       olDepth: [
          'm-0 list-decimal p-0 [list-style-position:outside]',
          'm-0 p-0 [list-style-position:outside] [list-style-type:upper-alpha]',
@@ -325,7 +327,7 @@ const editorTheme: EditorThemeClasses = {
          'm-0 p-0 [list-style-position:outside] [list-style-type:upper-roman]',
          'm-0 p-0 [list-style-position:outside] [list-style-type:lower-roman]',
       ],
-      ul: 'm-0 list-disc p-0 text-right [list-style-position:outside] marker:text-zinc-500',
+      ul: 'm-0 list-disc p-0 [list-style-position:outside] marker:text-zinc-500',
    },
    ltr: 'text-left',
    paragraph: 'my-2 whitespace-pre-wrap first:mt-0 last:mb-0',
@@ -2520,39 +2522,69 @@ function CompactChecklistShortcutPlugin() {
    return null;
 }
 
-function ChecklistRtlDirectionPlugin() {
+type DirectionUpdate = {
+   direction: 'ltr' | 'rtl';
+   key: NodeKey;
+};
+
+function $resolveDirectionFromText(node: ElementNode): 'ltr' | 'rtl' {
+   const detectedDirection = getTextDirection(node.getTextContent().trimStart());
+   if (detectedDirection) return detectedDirection;
+   return node.getDirection() ?? 'rtl';
+}
+
+function $collectDirectionUpdates(node: ElementNode, updates: DirectionUpdate[]) {
+   if (node.getType() !== 'root' && !node.isInline()) {
+      const direction = $resolveDirectionFromText(node);
+      if (node.getDirection() !== direction) {
+         updates.push({ direction, key: node.getKey() });
+      }
+   }
+
+   for (const child of node.getChildren()) {
+      if (!$isElementNode(child)) continue;
+      $collectDirectionUpdates(child, updates);
+   }
+}
+
+function AutoDirectionPlugin() {
    const [editor] = useLexicalComposerContext();
 
-   const syncListItemDirection = useCallback(
-      (nodeKey: NodeKey) => {
-         const listItemElement = editor.getElementByKey(nodeKey);
-         if (!(listItemElement instanceof HTMLLIElement)) return;
+   const syncDirections = useCallback(
+      (editorState: EditorState) => {
+         const updates = editorState.read(() => {
+            const nextUpdates: DirectionUpdate[] = [];
+            $collectDirectionUpdates($getRoot(), nextUpdates);
+            return nextUpdates;
+         });
 
-         const listItemNode = $getNodeByKey(nodeKey);
-         if (!(listItemNode instanceof ListItemNode)) return;
+         if (!updates.length) return;
 
-         const parentNode = listItemNode.getParent();
-         const isChecklistItem = parentNode instanceof ListNode && parentNode.getListType() === 'check';
-
-         if (isChecklistItem) {
-            listItemElement.setAttribute('dir', 'rtl');
-         } else if (listItemElement.dir === 'rtl') {
-            listItemElement.removeAttribute('dir');
-         }
+         editor.update(
+            () => {
+               for (const update of updates) {
+                  const node = $getNodeByKey(update.key);
+                  if ($isElementNode(node)) {
+                     node.setDirection(update.direction);
+                  }
+               }
+            },
+            { tag: autoDirectionSyncTag }
+         );
       },
       [editor]
    );
 
    useEffect(() => {
-      return editor.registerMutationListener(ListItemNode, (mutatedNodes) => {
-         editor.getEditorState().read(() => {
-            for (const [nodeKey, mutation] of mutatedNodes) {
-               if (mutation === 'destroyed') continue;
-               syncListItemDirection(nodeKey);
-            }
-         });
+      syncDirections(editor.getEditorState());
+   }, [editor, syncDirections]);
+
+   useEffect(() => {
+      return editor.registerUpdateListener(({ editorState, tags }) => {
+         if (tags.has(autoDirectionSyncTag) || editor.isComposing()) return;
+         syncDirections(editorState);
       });
-   }, [editor, syncListItemDirection]);
+   }, [editor, syncDirections]);
 
    return null;
 }
@@ -3122,6 +3154,7 @@ export function DescriptionEditor({
                                  variant === 'framed'
                                     ? 'min-h-24 w-full overflow-auto break-words bg-transparent py-3 pl-3 pr-11 text-right text-sm leading-6 text-zinc-300 outline-none'
                                     : 'min-h-16 w-full overflow-auto break-words bg-transparent py-1 pl-0 pr-11 text-right text-sm leading-6 text-zinc-300 outline-none',
+                                 '[&_[dir=ltr]]:text-left [&_[dir=rtl]]:text-right',
                                  contentClassName,
                                  'pr-2'
                               )}
@@ -3149,7 +3182,7 @@ export function DescriptionEditor({
                   <HistoryPlugin />
                   <ListPlugin />
                   <CheckListPlugin />
-                  <ChecklistRtlDirectionPlugin />
+                  <AutoDirectionPlugin />
                   <PlaygroundTabIndentationPlugin maxIndent={7} />
                   {blockAnchorElem ? <DescriptionDraggableBlockPlugin anchorElem={blockAnchorElem} /> : null}
                   <MarkdownShortcutPlugin transformers={descriptionMarkdownTransformers} />

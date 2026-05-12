@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { prisma, type Prisma, type SyncEvent } from '@taskara/db';
 import { createCommentSchema, createTaskSchema, updateTaskSchema } from '@taskara/shared';
 import { z, ZodError } from 'zod';
+import { config } from '../config';
 import { getRequestActor, type RequestActor } from '../services/actor';
 import { HttpError } from '../services/http';
 import { assertActorCanAccessTeamSlug, listAccessibleTeamIds } from '../services/team-access';
@@ -47,6 +48,10 @@ const pushRequestSchema = z.object({
 });
 
 const stalePendingMutationMs = 2 * 60 * 1000;
+const allowedCorsOrigins = new Set([
+  config.WEB_ORIGIN,
+  ...config.TASKARA_ALLOWED_ORIGINS.split(',').map((origin) => origin.trim()).filter(Boolean)
+]);
 
 const updateTaskMutationArgsSchema = z.object({
   idOrKey: z.string().trim().min(1),
@@ -557,12 +562,20 @@ function openSyncStream(
   actor: RequestActor,
   clientId?: string
 ): void {
+  const corsOrigin = resolveCorsOrigin(request);
   reply.hijack();
   reply.raw.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
     'cache-control': 'no-cache, no-transform',
     connection: 'keep-alive',
-    'x-accel-buffering': 'no'
+    'x-accel-buffering': 'no',
+    ...(corsOrigin
+      ? {
+          'access-control-allow-origin': corsOrigin,
+          'access-control-allow-credentials': 'true',
+          vary: 'Origin'
+        }
+      : {})
   });
 
   const streamClientId = `${actor.workspace.id}:${actor.user.id}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
@@ -600,6 +613,12 @@ function mutationErrorMessage(error: unknown): string {
   if (error instanceof ZodError) return 'Validation failed';
   if (error instanceof Error && error.message) return error.message;
   return 'Mutation failed';
+}
+
+function resolveCorsOrigin(request: FastifyRequest): string | null {
+  const originHeader = request.headers.origin;
+  if (typeof originHeader !== 'string') return null;
+  return allowedCorsOrigins.has(originHeader) ? originHeader : null;
 }
 
 function isStalePendingMutation(updatedAt: Date): boolean {

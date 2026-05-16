@@ -245,6 +245,7 @@ const taskDraftViewStoragePrefix = 'taskara:tasks-draft-view';
 const taskViewOrderStoragePrefix = 'taskara:tasks-view-order';
 const taskComposerPreferenceStoragePrefix = 'taskara:task-composer-preferences';
 const issueListScrollStoragePrefix = 'taskara:issue-list-scroll';
+const stableTaskOrderStoragePrefix = 'taskara:tasks-stable-order';
 const issueListScrollSnapshotMaxAgeMs = 30 * 60 * 1000;
 const issueReturnHighlightDurationMs = 2500;
 
@@ -261,6 +262,10 @@ type IssueListScrollSnapshot = {
 type StableTaskOrderSnapshot = {
    key: string;
    taskIds: string[];
+};
+
+type StoredStableTaskOrderSnapshot = StableTaskOrderSnapshot & {
+   savedAt: number;
 };
 
 type TaskComposerPreferences = {
@@ -294,6 +299,10 @@ function taskDraftViewStorageKey(workspaceKey: string, teamKey: string, viewKey:
 
 function issueListScrollStorageKey(pathname: string, search: string, hash: string) {
    return `${issueListScrollStoragePrefix}:${pathname}${search}${hash}`;
+}
+
+function stableTaskOrderStorageKey(key: string) {
+   return `${stableTaskOrderStoragePrefix}:${key}`;
 }
 
 function getActiveViewKeyFromSearch(search: string): ActiveViewKey | null {
@@ -466,6 +475,61 @@ function removeStoredIssueListScrollSnapshot(pathname: string, search: string, h
    if (typeof window === 'undefined') return;
    try {
       window.sessionStorage.removeItem(issueListScrollStorageKey(pathname, search, hash));
+   } catch {
+      // Ignore sessionStorage failures.
+   }
+}
+
+function readStoredStableTaskOrderSnapshot(key: string): StableTaskOrderSnapshot | null {
+   if (typeof window === 'undefined') return null;
+
+   const storageKey = stableTaskOrderStorageKey(key);
+   let raw: string | null = null;
+   try {
+      raw = window.sessionStorage.getItem(storageKey);
+   } catch {
+      return null;
+   }
+   if (!raw) return null;
+
+   try {
+      const parsed = JSON.parse(raw) as Partial<StoredStableTaskOrderSnapshot>;
+      if (
+         parsed.key !== key ||
+         typeof parsed.savedAt !== 'number' ||
+         !Array.isArray(parsed.taskIds) ||
+         Date.now() - parsed.savedAt > issueListScrollSnapshotMaxAgeMs
+      ) {
+         try {
+            window.sessionStorage.removeItem(storageKey);
+         } catch {
+            // Ignore sessionStorage failures.
+         }
+         return null;
+      }
+
+      return {
+         key,
+         taskIds: parsed.taskIds.filter((taskId): taskId is string => typeof taskId === 'string'),
+      };
+   } catch {
+      try {
+         window.sessionStorage.removeItem(storageKey);
+      } catch {
+         // Ignore sessionStorage failures.
+      }
+      return null;
+   }
+}
+
+function writeStoredStableTaskOrderSnapshot(snapshot: StableTaskOrderSnapshot) {
+   if (typeof window === 'undefined') return;
+
+   try {
+      window.sessionStorage.setItem(
+         stableTaskOrderStorageKey(snapshot.key),
+         JSON.stringify({ ...snapshot, savedAt: Date.now() } satisfies StoredStableTaskOrderSnapshot)
+      );
    } catch {
       // Ignore sessionStorage failures.
    }
@@ -1474,13 +1538,16 @@ export function TasksView({ defaultSystemView = 'active', personalOnly = true }:
    );
 
    const filteredTasks = useMemo(() => {
+      const currentSnapshot =
+         stableTaskOrderRef.current || readStoredStableTaskOrderSnapshot(stableTaskOrderKey);
       const { nextSnapshot, tasks } = preserveStableTaskOrder(
          filteredTasksBeforeStableSort,
          draftView.orderBy,
          stableTaskOrderKey,
-         stableTaskOrderRef.current
+         currentSnapshot
       );
       stableTaskOrderRef.current = nextSnapshot;
+      writeStoredStableTaskOrderSnapshot(nextSnapshot);
       return tasks;
    }, [draftView.orderBy, filteredTasksBeforeStableSort, stableTaskOrderKey]);
 

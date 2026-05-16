@@ -48,7 +48,7 @@ import { isAiEnabledForUserId } from '@/lib/ai-access';
 import { formatJalaliDateTime } from '@/lib/jalali';
 import { editorValueToPlainText, suggestTaskText, type TaskTextSuggestionResult } from '@/lib/task-text-ai';
 import { taskaraRequest, uploadTaskAttachment, uploadTaskCommentAttachment } from '@/lib/taskara-client';
-import { sendTaskSyncMutation, useTaskSyncPulse } from '@/lib/task-sync';
+import { sendTaskSyncMutation } from '@/lib/task-sync';
 import { useWorkspaceTaskSync } from '@/lib/task-sync-provider';
 import { taskPriorities, taskStatuses, taskWeights } from '@/lib/taskara-presenters';
 import type {
@@ -375,10 +375,6 @@ export function IssuePage() {
       }
       void loadRelatedDocs(task.id);
    }, [loadRelatedDocs, task?.id]);
-
-   useTaskSyncPulse(() => {
-      void load();
-   }, Boolean(taskKey));
 
    useEffect(() => {
       const handleKeyDown = (event: KeyboardEvent) => {
